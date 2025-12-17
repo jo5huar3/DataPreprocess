@@ -1,0 +1,3 @@
+python src/util/code_parser.py ~/Automated_Reasoning_for_Cryptography/cryptol ~/Automated_Reasoning_for_Cryptography/cryptol-specs \
+    --ext .cry --out data/all_sources_raw.jsonl \
+    --strip ~/Automated_Reasoning_for_Cryptography/

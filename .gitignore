@@ -3,7 +3,6 @@
 data
 minhash_outputs*
 recycle*
-CLI.txt
 *.gexf
 *.graphml
 *.csv
