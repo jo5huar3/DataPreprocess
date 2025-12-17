@@ -1,1 +1,10 @@
-cryptol=3.3.0
+cryptol==3.3.0
+huggingface_hub
+pandas
+numpy
+tiktoken
+python-dotenv
+pydantic
+openai
+datasketch
+transformers
