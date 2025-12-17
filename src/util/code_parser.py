@@ -95,7 +95,24 @@ def main(argv=None):
         help="Append to the JSONL instead of overwriting."
     )
 
+    parser.add_argument(
+        "--ext", "--include-ext",
+        nargs="+",
+        default=[".cry", ".saw"],
+        help="File extensions to include (space-separated). Example: --ext .cry .saw .md"
+    )
+
     args = parser.parse_args(argv)
+
+    # Convert ext to .ext format
+    exts = []
+    for e in args.ext:
+        e = e.strip().lower()
+        if not e:
+            continue
+        if not e.startswith("."):
+            e = "." + e
+        exts.append(e)
 
     roots = [Path(r).expanduser().resolve() for r in args.roots]
     out_path = Path(args.out).expanduser().resolve()
@@ -110,7 +127,7 @@ def main(argv=None):
     with open(out_path, mode, encoding="utf-8") as out_f:
         for root in roots:
             root = root.resolve()
-            for p in iter_source_files(root, exts=(".cry", ".saw")):
+            for p in iter_source_files(root, exts=exts):
                 try:
                     content = read_text_safe(p)
                 except Exception as e:
