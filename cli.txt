@@ -1,3 +1,11 @@
 python src/util/code_parser.py ~/Automated_Reasoning_for_Cryptography/cryptol ~/Automated_Reasoning_for_Cryptography/cryptol-specs \
     --ext .cry --out data/all_sources_raw.jsonl \
     --strip ~/Automated_Reasoning_for_Cryptography/
+
+docker run --name cryptol-remote-api -d \
+  --platform linux/amd64 \
+  -v /Users/josh/Automated_Reasoning_for_Cryptography/test-files:/home/cryptol/files \
+  -p 8080:8080 \
+  ghcr.io/galoisinc/cryptol-remote-api:3.3.0
+
+python -m pip install -r requirements.txt
