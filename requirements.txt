@@ -8,3 +8,5 @@ pydantic
 openai
 datasketch
 transformers
+matplotlib
+seaborn
