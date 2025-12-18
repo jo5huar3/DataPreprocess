@@ -9,34 +9,26 @@ import cryptol
 def write_cryptol_tempfile(
     code: str,
     host_mount_dir: str,
+    source_filename: str,          # e.g. "cryptol/examples/DEStest.cry"
     prefer_name: Optional[str] = None,
 ) -> Tuple[pathlib.Path, str]:
-    """
-    Write UTF-8 Cryptol code to a temp file in the *host* mount directory.
-
-    Returns:
-      (host_path, container_relpath)
-        - host_path: absolute Path on the host filesystem
-        - container_relpath: path the Cryptol server should load, relative to its CWD,
-          assuming the host_mount_dir is mounted at /home/cryptol/files inside the container.
-          (i.e., 'files/<basename>.cry')
-    """
     host_mount = pathlib.Path(host_mount_dir).resolve()
-    host_mount.mkdir(parents=True, exist_ok=True)
 
-    # Pick a readable basename if you have one; otherwise tempfile will generate one
+    # Mirror the source file’s directory under the mount
+    rel_dir = pathlib.PurePosixPath(source_filename).parent  # "cryptol/examples"
+    host_target_dir = host_mount / pathlib.Path(*rel_dir.parts)
+    host_target_dir.mkdir(parents=True, exist_ok=True)
+
     suffix = ".cry"
-    prefix = None
+    prefix = ""
     if prefer_name:
-        # sanitize to a simple stem
-        stem = pathlib.Path(prefer_name).stem
-        prefix = f"{stem}_"
+        prefix = f"{pathlib.Path(prefer_name).stem}_"
 
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
-        dir=str(host_mount),
-        prefix=(prefix or ""),
+        dir=str(host_target_dir),
+        prefix=prefix,
         suffix=suffix,
         delete=False,
     ) as tf:
@@ -45,10 +37,9 @@ def write_cryptol_tempfile(
         os.fsync(tf.fileno())
         host_path = pathlib.Path(tf.name)
 
-    # Inside the container we assume mount -> /home/cryptol/files
-    container_relpath = f"files/{host_path.name}"
+    # Build the container path using POSIX separators
+    container_relpath = "files/" + str(rel_dir / host_path.name).replace("\\", "/")
     return host_path, container_relpath
-
 
 def load_with_cryptol_server(
     container_relpath: str,
@@ -103,6 +94,7 @@ def verify_df_row_with_cryptol(
     host_path, container_relpath = write_cryptol_tempfile(
         code=code,
         host_mount_dir=host_mount_dir,
+        source_filename=row["filename"],
         prefer_name=prefer_name,
     )
 
