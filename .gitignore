@@ -25,6 +25,7 @@ foo.log
 .gitignore
 .env
 new_implementations
+toy-cryptol-ast/dist-newstyle
 base
 adapters
 UH-Insure-NSA
