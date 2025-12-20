@@ -218,22 +218,22 @@ def minimize_imports(
         removed = trial_imports.pop(i)  # remove the actual current import line
         candidate_code = "\n".join(header + trial_imports + body) + "\n"
 
-        print(f"    [try] Removing import at line {i}: {removed!r}")
+        #print(f"    [try] Removing import at line {i}: {removed!r}")
         ok, info = _loads_ok(candidate_code)
 
         if ok:
-            print("    [keep removed] OK without this import")
+            #print("    [keep removed] OK without this import")
             imports = trial_imports
             code = candidate_code
             # do NOT increment i; next line shifted into position i
         else:
-            print("    [revert] Need this import")
+            #print("    [revert] Need this import")
             i += 1
 
 
 
     n_final = count_real_imports(imports)
-    print(f"  [imports] Done. Final imports: {n_final}")
+    #print(f"  [imports] Done. Final imports: {n_final}")
 
     final_code = "\n".join(header + imports + body) + "\n"
     return final_code, n_orig, n_final
