@@ -4,8 +4,21 @@ python src/util/code_parser.py ~/Automated_Reasoning_for_Cryptography/cryptol ~/
 
 docker run --name cryptol-remote-api -d \
   --platform linux/amd64 \
-  -v /Users/josh/Automated_Reasoning_for_Cryptography/test-files:/home/cryptol/files \
+  -v /Users/josh/Automated_Reasoning_for_Cryptography:/home/cryptol/files \
+  -e CRYPTOLPATH="/home/cryptol/files/cryptol/examples/cryptol-specs" \
+  -p 8080:8080 \
+  ghcr.io/galoisinc/cryptol-remote-api:3.3.0
+
+docker run --name cryptol-remote-api -d \
+  --platform linux/amd64 \
+  -v /Users/josh/Automated_Reasoning_for_Cryptography:/home/cryptol/files \
   -p 8080:8080 \
   ghcr.io/galoisinc/cryptol-remote-api:3.3.0
 
 python -m pip install -r requirements.txt
+
+/home/cryptol/files/cryptol/examples/cryptol-specs
+
+python src/util/code_parser.py ~/Automated_Reasoning_for_Cryptography/cryptol_slices \
+    --ext .cry --out data/all_slices_raw_v2-0.jsonl \
+    --strip ~/Automated_Reasoning_for_Cryptography/
