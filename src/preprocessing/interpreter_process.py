@@ -206,24 +206,30 @@ def minimize_imports(
             except (FileNotFoundError, OSError):
                 pass
 
-        # Greedy removal loop
-    for idx, imp_line in enumerate(imports):
+    # Greedy removal loop (safe with pop)
+    i = 0
+    while i < len(imports):
+        imp_line = imports[i]
         if not imp_line.lstrip().startswith("import "):
+            i += 1
             continue
 
         trial_imports = imports.copy()
-        trial_imports.pop(idx)
+        removed = trial_imports.pop(i)  # remove the actual current import line
         candidate_code = "\n".join(header + trial_imports + body) + "\n"
 
-        print(f"    [try] Removing import at line {idx}: {imp_line!r}")
+        print(f"    [try] Removing import at line {i}: {removed!r}")
         ok, info = _loads_ok(candidate_code)
 
         if ok:
             print("    [keep removed] OK without this import")
             imports = trial_imports
             code = candidate_code
+            # do NOT increment i; next line shifted into position i
         else:
             print("    [revert] Need this import")
+            i += 1
+
 
 
     n_final = count_real_imports(imports)
