@@ -182,7 +182,11 @@ def run_clustering(
         if not scored:
             continue
 
-        scored.sort(key=lambda t: (-t[1], -t[2], -t[3], t[4], t[0]))
+        #scored.sort(key=lambda t: (-t[1], -t[2], -t[3], t[4], t[0]))
+        # Keep the longest always (by tokens), regardless of quality score
+        scored.sort(key=lambda t: (-t[3], -t[2], -t[1], t[4], t[0]))
+        #                     ^num_tokens  ^num_shingles ^score
+
         keep = scored[0][0]
         drops = [p for p, *_ in scored[1:]]
 
