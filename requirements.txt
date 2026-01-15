@@ -10,3 +10,4 @@ datasketch
 transformers
 matplotlib
 seaborn
+chromadb
