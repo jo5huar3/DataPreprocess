@@ -42,3 +42,6 @@ src/eval/colab_eval.py
 cache
 src/eval/.data/test
 src/eval/.data/saw_template.txt
+cache
+.logfire
+text
