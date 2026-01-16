@@ -34,15 +34,24 @@ def strip_front_matter(md: str) -> str:
             return md[m.end():]
     return md
 
-# Come back here. Chunk a markdown file into pieces with headings preserved.
-def chunk_markdown(md: str, source_path: str, max_chars: int = 1800, overlap: int = 200) -> List[Chunk]:
+def chunk_markdown(
+    md: str,
+    source_path: str,
+    max_chars: int = 1800,
+    overlap: int = 200,
+    min_chars: int = 600,  # threshold for "too small, try to merge forward"
+) -> List[Chunk]:
     """
-    Simple chunker:
-      - keeps headings (roughly) by splitting on markdown headings
-      - then windows text into <= max_chars with overlap
+    Greedy heading packer:
+      1) Split markdown into heading sections (heading + following body).
+      2) Pack sections linearly into chunks up to max_chars (greedy).
+      3) Enforce min_chars by preferring to merge small chunks forward when possible.
+      4) If a single section > max_chars, split it internally using sliding windows,
+         but ALWAYS keep the heading at the top of each window.
     """
     md = strip_front_matter(md).replace("\r\n", "\n")
-    # Split into sections by headings, but keep the heading in the section
+
+    # Split into sections by headings, keeping headings
     parts = re.split(r"(?m)^(#{1,6}\s+.*)$", md)
     sections: List[str] = []
     i = 0
@@ -50,7 +59,9 @@ def chunk_markdown(md: str, source_path: str, max_chars: int = 1800, overlap: in
         if parts[i].startswith("#"):
             heading = parts[i].strip()
             body = parts[i + 1] if i + 1 < len(parts) else ""
-            sections.append(f"{heading}\n{body}".strip())
+            sec = f"{heading}\n{body}".strip()
+            if sec:
+                sections.append(sec)
             i += 2
         else:
             # pre-heading content
@@ -58,37 +69,156 @@ def chunk_markdown(md: str, source_path: str, max_chars: int = 1800, overlap: in
                 sections.append(parts[i].strip())
             i += 1
 
-    chunks: List[Chunk] = []
-
     def make_id(text: str, extra: str) -> str:
-        h = hashlib.sha256((extra + "\n" + text).encode("utf-8")).hexdigest()[:24]
-        return h
+        return hashlib.sha256((extra + "\n" + text).encode("utf-8")).hexdigest()[:24]
 
-    for sec_idx, sec in enumerate(sections):
-        if not sec.strip():
-            continue
+    def split_oversized_section(sec: str, sec_idx: int) -> List[Chunk]:
+        """
+        If a single heading section is too large, window it, but keep the heading line.
+        """
+        lines = sec.splitlines()
+        heading_line = lines[0].strip() if lines and lines[0].lstrip().startswith("#") else ""
+        rest = "\n".join(lines[1:]).strip() if heading_line else sec
+
+        prefix = (heading_line + "\n").strip() if heading_line else ""
+        prefix_len = len(prefix) + (1 if prefix else 0)
+
+        payload = rest
+        chunks_local: List[Chunk] = []
         start = 0
-        while start < len(sec):
-            end = min(len(sec), start + max_chars)
-            window = sec[start:end].strip()
-            if window:
-                cid = make_id(window, f"{source_path}:{sec_idx}:{start}")
-                chunks.append(
+        # available space for payload after prefix
+        payload_max = max(1, max_chars - prefix_len)
+
+        while start < len(payload):
+            end = min(len(payload), start + payload_max)
+            window_payload = payload[start:end].strip()
+            if window_payload:
+                text = (prefix + "\n" + window_payload).strip() if prefix else window_payload
+                cid = make_id(text, f"{source_path}:{sec_idx}:{start}")
+                chunks_local.append(
                     Chunk(
                         id=cid,
-                        text=window,
+                        text=text,
                         meta={
                             "source": source_path,
-                            "section_index": sec_idx,
+                            "section_start": sec_idx,
+                            "section_end": sec_idx,
                             "start_char": start,
                         },
                     )
                 )
-            if end >= len(sec):
+            if end >= len(payload):
                 break
             start = max(0, end - overlap)
 
-    return chunks
+        return chunks_local
+
+    # Greedy packing of sections into chunks
+    chunks: List[Chunk] = []
+    cur_parts: List[str] = []
+    cur_start_sec: int = 0
+
+    def flush(cur_end_sec: int):
+        nonlocal cur_parts, cur_start_sec, chunks
+        if not cur_parts:
+            return
+        text = "\n\n".join(cur_parts).strip()
+        if not text:
+            cur_parts = []
+            return
+        cid = make_id(text, f"{source_path}:{cur_start_sec}:{cur_end_sec}")
+        chunks.append(
+            Chunk(
+                id=cid,
+                text=text,
+                meta={
+                    "source": source_path,
+                    "section_start": cur_start_sec,
+                    "section_end": cur_end_sec,
+                },
+            )
+        )
+        cur_parts = []
+
+    for sec_idx, sec in enumerate(sections):
+        if not sec.strip():
+            continue
+
+        # If section itself is huge, flush current and split this one
+        if len(sec) > max_chars:
+            # flush what we have first
+            if cur_parts:
+                flush(sec_idx - 1)
+
+            # split oversized section into windows (heading preserved)
+            chunks.extend(split_oversized_section(sec, sec_idx))
+            continue
+
+        if not cur_parts:
+            cur_parts = [sec]
+            cur_start_sec = sec_idx
+            continue
+
+        candidate = "\n\n".join(cur_parts + [sec]).strip()
+
+        # Greedy rule: keep adding as long as it fits max_chars
+        if len(candidate) <= max_chars:
+            cur_parts.append(sec)
+            continue
+
+        # Would exceed max_chars: flush current
+        # BUT if current chunk is tiny (< min_chars), try to avoid tiny chunks by
+        # flushing anyway (we have no room), and start new with sec.
+        flush(sec_idx - 1)
+        cur_parts = [sec]
+        cur_start_sec = sec_idx
+
+    # flush leftover
+    if cur_parts:
+        flush(len(sections) - 1)
+
+    # Optional: drop chunks that are basically only headings (very low signal)
+    cleaned: List[Chunk] = []
+    for c in chunks:
+        lines = [ln for ln in c.text.splitlines() if ln.strip()]
+        non_heading = [ln for ln in lines if not re.match(r"^#{1,6}\s+", ln.strip())]
+        if len(" ".join(non_heading).strip()) < 80:
+            # skip near-empty content (mostly headings)
+            continue
+        cleaned.append(c)
+
+    # Second pass: merge tiny chunks forward if they ended up < min_chars and merging fits.
+    # (Linear, greedy; preserves order.)
+    merged: List[Chunk] = []
+    i = 0
+    while i < len(cleaned):
+        cur = cleaned[i]
+        if len(cur.text) >= min_chars or i == len(cleaned) - 1:
+            merged.append(cur)
+            i += 1
+            continue
+
+        nxt = cleaned[i + 1]
+        merged_text = (cur.text + "\n\n" + nxt.text).strip()
+        if len(merged_text) <= max_chars:
+            cid = make_id(merged_text, f"{source_path}:{cur.meta['section_start']}:{nxt.meta['section_end']}")
+            merged.append(
+                Chunk(
+                    id=cid,
+                    text=merged_text,
+                    meta={
+                        "source": source_path,
+                        "section_start": cur.meta["section_start"],
+                        "section_end": nxt.meta["section_end"],
+                    },
+                )
+            )
+            i += 2
+        else:
+            merged.append(cur)
+            i += 1
+
+    return merged
 
 # Create embeddings for a list of texts.
 def embed_texts(client: OpenAI, texts: List[str], model: str = "text-embedding-3-small") -> List[List[float]]:
@@ -308,7 +438,7 @@ if __name__ == "__main__":
     print("\nTop hits:")
     for h in hits:
         print(f"- {h['distance']:.4f} :: {h['meta']['source']} (chunk_id={h['id']})")
-        print(h['text'])
+        print(h['text'], "\n" + '-' * 80)
 
     # 3) Use retrieved chunks as context
     # ans = answer_with_context(q, hits)
