@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import os
 import re
 import glob
@@ -9,9 +8,7 @@ from typing import Iterable, List, Dict, Any, Tuple
 import chromadb
 from openai import OpenAI
 
-# -----------------------------
-# Chunking
-# -----------------------------
+# Chunk(id, text, meta)
 @dataclass
 class Chunk:
     id: str
@@ -37,7 +34,7 @@ def strip_front_matter(md: str) -> str:
             return md[m.end():]
     return md
 
-# 
+# Come back here. Chunk a markdown file into pieces with headings preserved.
 def chunk_markdown(md: str, source_path: str, max_chars: int = 1800, overlap: int = 200) -> List[Chunk]:
     """
     Simple chunker:
@@ -93,9 +90,7 @@ def chunk_markdown(md: str, source_path: str, max_chars: int = 1800, overlap: in
 
     return chunks
 
-# -----------------------------
-# Embeddings
-# -----------------------------
+# Create embeddings for a list of texts.
 def embed_texts(client: OpenAI, texts: List[str], model: str = "text-embedding-3-small") -> List[List[float]]:
     """
     Batch embeddings. OpenAI embeddings endpoint supports array-of-strings input. :contentReference[oaicite:1]{index=1}
@@ -104,60 +99,135 @@ def embed_texts(client: OpenAI, texts: List[str], model: str = "text-embedding-3
     # The API returns embeddings in the same order as inputs.
     return [item.embedding for item in resp.data]
 
-# -----------------------------
-# Index + Query with Chroma
-# -----------------------------
+# Vector store setup. Create persistant vector store or return existing one.
 def get_chroma_collection(persist_dir: str, name: str = "md_kb"):
     chroma_client = chromadb.PersistentClient(path=persist_dir)
     return chroma_client.get_or_create_collection(name=name)
 
+# Index a single markdown text document. 
+def index_markdown_text(
+    *,
+    md_text: str,
+    source_path: str,
+    collection,
+    openai_client: OpenAI,
+    embedding_model: str = "text-embedding-3-small",
+    batch_size: int = 64,
+    chunk_max_chars: int = 1800,
+    chunk_overlap: int = 200,
+    # If you want to avoid "ID already exists" errors when re-indexing the same file:
+    skip_existing: bool = True,
+) -> int:
+    """
+    Index a SINGLE markdown document provided as a string.
+
+    Inputs:
+      - md_text: the markdown content
+      - source_path: identifier for metadata + stable chunk IDs (can be a real path or logical name)
+      - collection: a Chroma collection
+      - openai_client: initialized OpenAI client
+      - embedding_model: OpenAI embedding model
+      - batch_size: embedding/insert batch size
+      - chunk_max_chars / chunk_overlap: chunking params
+      - skip_existing: if True, checks IDs before adding to avoid duplicates
+
+    Output:
+      - int: number of chunks added (not total chunks produced)
+    """
+    # 1) chunk the markdown string
+    chunks = chunk_markdown(
+        md_text,
+        source_path=source_path,
+        max_chars=chunk_max_chars,
+        overlap=chunk_overlap,
+    )
+
+    if not chunks:
+        return 0
+
+    # 2) prepare lists
+    ids = [c.id for c in chunks]
+    texts = [c.text for c in chunks]
+    metas = [c.meta for c in chunks]
+
+    added = 0
+
+    # 3) embed + store in batches
+    for i in range(0, len(chunks), batch_size):
+        batch_ids = ids[i : i + batch_size]
+        batch_texts = texts[i : i + batch_size]
+        batch_metas = metas[i : i + batch_size]
+
+        # Optionally filter out IDs that already exist in the DB
+        if skip_existing:
+            existing = collection.get(ids=batch_ids, include=[])
+            existing_ids = set(existing.get("ids", []))
+            if existing_ids:
+                keep = [
+                    j for j, _id in enumerate(batch_ids)
+                    if _id not in existing_ids
+                ]
+                if not keep:
+                    continue
+                batch_ids = [batch_ids[j] for j in keep]
+                batch_texts = [batch_texts[j] for j in keep]
+                batch_metas = [batch_metas[j] for j in keep]
+
+        # If nothing left after filtering, skip
+        if not batch_ids:
+            continue
+
+        vectors = embed_texts(openai_client, batch_texts, model=embedding_model)
+
+        collection.add(
+            ids=batch_ids,
+            documents=batch_texts,
+            metadatas=batch_metas,
+            embeddings=vectors,
+        )
+        added += len(batch_ids)
+
+    return added
+
+# Index all markdown files under a directory.
 def index_markdown_folder(
     md_folder: str,
     persist_dir: str = "./chroma_db",
     collection_name: str = "md_kb",
     embedding_model: str = "text-embedding-3-small",
     batch_size: int = 64,
-):
+    chunk_max_chars: int = 1800,
+    chunk_overlap: int = 200,
+    skip_existing: bool = True,
+) -> None:
     """
-    Reads markdown, chunks it, embeds each chunk, stores:
-      - embeddings (vectors) for similarity search
-      - documents (chunk text) so we can use them as context later
-      - metadata (source info)
+    Reads markdown files in a folder and indexes each file by calling index_markdown_text().
     """
     openai_client = OpenAI()
     col = get_chroma_collection(persist_dir, collection_name)
 
     docs = read_markdown_files(md_folder)
-    all_chunks: List[Chunk] = []
+
+    total_added = 0
     for path, text in docs:
-        all_chunks.extend(chunk_markdown(text, source_path=path))
-
-    # De-dup by chunk id (if rerun)
-    # We'll check existing IDs in batches by trying "get"—simple approach: just upsert via add with unique IDs.
-    # If you re-run often, consider storing an "indexed_at" and doing update/upsert.
-    ids = [c.id for c in all_chunks]
-    texts = [c.text for c in all_chunks]
-    metas = [c.meta for c in all_chunks]
-
-    # Embed + add in batches
-    for i in range(0, len(all_chunks), batch_size):
-        batch_texts = texts[i:i + batch_size]
-        batch_ids = ids[i:i + batch_size]
-        batch_metas = metas[i:i + batch_size]
-
-        vectors = embed_texts(openai_client, batch_texts, model=embedding_model)
-
-        # Store embeddings AND the documents (chunk text)
-        # Using embeddings you provide (rather than Chroma's embedding_function)
-        col.add(
-            ids=batch_ids,
-            documents=batch_texts,
-            metadatas=batch_metas,
-            embeddings=vectors,
+        added = index_markdown_text(
+            md_text=text,
+            source_path=path,
+            collection=col,
+            openai_client=openai_client,
+            embedding_model=embedding_model,
+            batch_size=batch_size,
+            chunk_max_chars=chunk_max_chars,
+            chunk_overlap=chunk_overlap,
+            skip_existing=skip_existing,
         )
+        total_added += added
 
-    print(f"Indexed {len(all_chunks)} chunks into Chroma collection '{collection_name}' at {persist_dir}")
+    print(
+        f"Indexed {total_added} new chunks into Chroma collection '{collection_name}' at {persist_dir}"
+    )
 
+# Create embedding for the query and return k nearest neighbors from vector the database.
 def retrieve(
     query: str,
     persist_dir: str = "./chroma_db",
@@ -165,10 +235,6 @@ def retrieve(
     embedding_model: str = "text-embedding-3-small",
     k: int = 5,
 ):
-    """
-    Embeds the query, then does vector similarity search.
-    Returns retrieved chunks (text) + metadata.
-    """
     openai_client = OpenAI()
     col = get_chroma_collection(persist_dir, collection_name)
 
@@ -176,14 +242,19 @@ def retrieve(
     res = col.query(
         query_embeddings=[qvec],
         n_results=k,
-        include=["documents", "metadatas", "distances", "ids"],
+        include=["documents", "metadatas", "distances"],  # ✅ remove "ids"
     )
 
     hits = []
-    for doc, meta, dist, _id in zip(res["documents"][0], res["metadatas"][0], res["distances"][0], res["ids"][0]):
+    for doc, meta, dist, _id in zip(
+        res["documents"][0],
+        res["metadatas"][0],
+        res["distances"][0],
+        res["ids"][0],  # ✅ ids still returned automatically
+    ):
         hits.append({"id": _id, "text": doc, "meta": meta, "distance": dist})
     return hits
-
+# Convert list of chunks into a single context string.
 def build_context(hits: List[Dict[str, Any]], max_chars: int = 6000) -> str:
     """
     Concatenate retrieved chunk texts into one context block.
@@ -198,9 +269,7 @@ def build_context(hits: List[Dict[str, Any]], max_chars: int = 6000) -> str:
         used += len(snippet) + 2
     return "\n\n---\n\n".join(out)
 
-# -----------------------------
-# Example "use chunks as context"
-# -----------------------------
+# Answer a query using the retrieved context.
 def answer_with_context(query: str, hits: List[Dict[str, Any]]):
     """
     This shows the LAST PART you were confused about:
@@ -229,15 +298,17 @@ def answer_with_context(query: str, hits: List[Dict[str, Any]]):
 
 if __name__ == "__main__":
     # 1) Index markdown folder
-    # index_markdown_folder("./my_markdown_kb")
+    index_markdown_folder("/Users/josh/Automated_Reasoning_for_Cryptography/DataPreprocess/text/Cryptol-Reference-Manual-MD")
 
     # 2) Query + retrieve top-k chunks
-    q = "How do I define a role in a CPSA protocol?"
+    q = "How do I define a polymorphic type?"
     hits = retrieve(q, k=5)
 
+    print(q)
     print("\nTop hits:")
     for h in hits:
         print(f"- {h['distance']:.4f} :: {h['meta']['source']} (chunk_id={h['id']})")
+        print(h['text'])
 
     # 3) Use retrieved chunks as context
     # ans = answer_with_context(q, hits)

@@ -45,3 +45,4 @@ src/eval/.data/saw_template.txt
 cache
 .logfire
 text
+chroma_db
