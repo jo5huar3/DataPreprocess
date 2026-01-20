@@ -14,8 +14,8 @@ import Data.List (intersect, intercalate, isInfixOf, isPrefixOf)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
-import Data.Char (isSpace)     -- NEW
-
+import Data.Char (isSpace)     
+import Data.List (sortOn) 
 import Cryptol.Parser
   ( parseModule
   , defaultConfig
@@ -122,13 +122,14 @@ dumpModule m = do
   let decls   = topDecls m
       nameMap = buildNameMap decls
 
-      roots = [ td | td <- decls, rootNameFromTopDecl td /= Nothing ]
+      roots = [ td | td <- decls, isValueRootTopDecl td ]
 
   forM_ roots $ \td -> do
     case rootNameFromTopDecl td of
       Nothing -> pure ()
       Just nm -> do
-        let slice = sliceFor nameMap decls nm
+        let slice0 = sliceFor nameMap decls nm
+            slice  = normalizeSliceOrder decls slice0
         putStrLn "--------------------------------"
         putStrLn ("Slice for: " ++ pretty nm)
         putStrLn (unlines [ prettyTopDecl d | d <- slice ])
@@ -143,7 +144,7 @@ writeModuleSnippets outDir srcStr m = do
       nameMap = buildNameMap decls
 
       roots :: [TopDecl PName]
-      roots = [ td | td <- decls, rootNameFromTopDecl td /= Nothing ]
+      roots = [ td | td <- decls, isValueRootTopDecl td ]
 
       -- Get all import lines from the original source text
       importLines = importLinesFromSource srcStr
@@ -158,7 +159,8 @@ writeModuleSnippets outDir srcStr m = do
     case rootNameFromTopDecl td of
       Nothing -> pure ()
       Just nm -> do
-        let slice    = sliceFor nameMap decls nm
+        let slice0   = sliceFor nameMap decls nm
+            slice    = normalizeSliceOrder decls slice0
             baseName = pretty nm
             fileName = printf "%03d_%s.cry" i baseName
             outPath  = outDir </> fileName
@@ -383,6 +385,29 @@ namesInMatch m =
     Match _ e  -> namesInExpr e
     MatchLet b -> namesInDecl (DBind b)
 
+normalizeSliceOrder :: [TopDecl PName] -> [TopDecl PName] -> [TopDecl PName]
+normalizeSliceOrder fullDecls slice =
+  let firstOcc :: Map.Map PName Int
+      firstOcc =
+        Map.fromListWith min
+          [ (nm, i)
+          | (i, td) <- zip [0 :: Int ..] fullDecls
+          , nm <- defNamesFromTopDecl td
+          ]
+
+      groupPos :: TopDecl PName -> Int
+      groupPos td =
+        case mapMaybe (`Map.lookup` firstOcc) (defNamesFromTopDecl td) of
+          [] -> maxBound
+          xs -> minimum xs
+
+      sigPri :: TopDecl PName -> Int
+      sigPri td = if isSignatureTopDecl td then 0 else 1
+  in
+    -- include original index to preserve stability even if keys tie
+    map snd $
+      sortOn (\(i, td) -> (groupPos td, sigPri td, i)) (zip [0 :: Int ..] slice)
+
 -- Indent multi-line type signatures so that all continuation lines
 -- are more indented than the first line.
 --
@@ -415,6 +440,27 @@ indentSignatureLayout s =
               ln'         = indent ++ ln
               sawArrow'   = sawArrow || "=>" `isInfixOf` ln
           in ln' : go sawArrow' rest
+
+isValueRootTopDecl :: TopDecl PName -> Bool
+isValueRootTopDecl td =
+  case td of
+    Decl tl ->
+      case dropLocDecl (tlValue tl) of
+        DBind{}    -> True
+        DRec{}     -> True
+        DPatBind{} -> True
+        _          -> False
+    _ -> False
+
+
+isSignatureTopDecl :: TopDecl PName -> Bool
+isSignatureTopDecl td =
+  case td of
+    Decl tl ->
+      case dropLocDecl (tlValue tl) of
+        DSignature{} -> True
+        _            -> False
+    _ -> False
 
 -- Strip source-location wrappers so we can pattern match on the real Decl.
 dropLocDecl :: Decl PName -> Decl PName
