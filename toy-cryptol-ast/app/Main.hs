@@ -104,6 +104,28 @@ type NameMap = Map.Map PName [TopDecl PName]
 topDecls :: Module PName -> [TopDecl PName]
 topDecls = mDecls
 
+data TopSection = SecType | SecValue | SecOther
+  deriving (Eq)
+
+topSection :: TopDecl PName -> TopSection
+topSection td =
+  case td of
+    Decl tl ->
+      case dropLocDecl (tlValue tl) of
+        DType{}      -> SecType
+        DSignature{} -> SecValue
+        DBind{}      -> SecValue
+        DRec{}       -> SecValue
+        DPatBind{}   -> SecValue
+        _            -> SecOther
+
+    -- If these exist in your Cryptol version, treat them as "type section" too:
+    DPrimType{} -> SecType
+    TDNewtype{} -> SecType
+    TDEnum{}    -> SecType
+
+    _ -> SecOther
+
 -- Pick a “root” name for a definitional TopDecl (first name it defines)
 rootNameFromTopDecl :: TopDecl PName -> Maybe PName
 rootNameFromTopDecl td =
@@ -111,10 +133,51 @@ rootNameFromTopDecl td =
     (n:_) -> Just n
     []    -> Nothing
 
+firstOccMap :: [TopDecl PName] -> Map.Map PName Int
+firstOccMap fullDecls =
+  Map.fromListWith min
+    [ (nm, i)
+    | (i, td) <- zip [0 :: Int ..] fullDecls
+    , nm <- defNamesFromTopDecl td
+    ]
+
+groupPosOf :: Map.Map PName Int -> TopDecl PName -> Int
+groupPosOf firstOcc td =
+  case mapMaybe (`Map.lookup` firstOcc) (defNamesFromTopDecl td) of
+    [] -> maxBound
+    xs -> minimum xs
+
+needsBlankLine :: Map.Map PName Int -> TopDecl PName -> TopDecl PName -> Bool
+needsBlankLine firstOcc prev curr =
+  case (topSection prev, topSection curr) of
+    (SecType, SecType) -> False
+    (SecType, _)       -> True
+    (_, SecType)       -> True
+
+    (SecValue, SecValue) ->
+      groupPosOf firstOcc prev /= groupPosOf firstOcc curr
+
+    (a, b) ->
+      a /= b
+
+renderSlice :: [TopDecl PName] -> [TopDecl PName] -> String
+renderSlice fullDecls slice =
+  let firstOcc = firstOccMap fullDecls
+
+      go :: Maybe (TopDecl PName) -> [TopDecl PName] -> [String]
+      go _ [] = []
+      go Nothing (d:ds) =
+        prettyTopDecl d : go (Just d) ds
+      go (Just prev) (d:ds) =
+        (if needsBlankLine firstOcc prev d then [""] else [])
+        ++ [prettyTopDecl d]
+        ++ go (Just d) ds
+  in
+    unlines (go Nothing slice)
+
 --------------------------------------------------------------------------------
 -- Stage 1: dump to stdout (for debugging)
 --------------------------------------------------------------------------------
-
 dumpModule :: Module PName -> IO ()
 dumpModule m = do
   putStrLn "================================"
@@ -132,7 +195,7 @@ dumpModule m = do
             slice  = normalizeSliceOrder decls slice0
         putStrLn "--------------------------------"
         putStrLn ("Slice for: " ++ pretty nm)
-        putStrLn (unlines [ prettyTopDecl d | d <- slice ])
+        putStrLn (renderSlice decls slice)
 
 --------------------------------------------------------------------------------
 -- Stage 2: actual file writing
@@ -165,7 +228,7 @@ writeModuleSnippets outDir srcStr m = do
             fileName = printf "%03d_%s.cry" i baseName
             outPath  = outDir </> fileName
 
-            bodyBlock = unlines [ prettyTopDecl d | d <- slice ]
+            bodyBlock = renderSlice decls slice
 
             contents =
               if null importBlock
