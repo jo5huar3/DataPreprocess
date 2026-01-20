@@ -384,6 +384,7 @@ def retrieve(
     ):
         hits.append({"id": _id, "text": doc, "meta": meta, "distance": dist})
     return hits
+
 # Convert list of chunks into a single context string.
 def build_context(hits: List[Dict[str, Any]], max_chars: int = 6000) -> str:
     """
