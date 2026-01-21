@@ -80,3 +80,16 @@ executable toy-cryptol-ast
 
     -- Base language which the package is written in.
     default-language: Haskell2010
+
+executable cryptol-meta
+  main-is: MetaMain.hs
+  hs-source-dirs: app
+  default-language: Haskell2010
+  build-depends:
+      base
+    , text
+    , containers
+    , filepath
+    , aeson
+    , bytestring
+    , cryptol
