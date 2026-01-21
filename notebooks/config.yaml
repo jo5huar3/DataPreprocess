@@ -1,0 +1,40 @@
+# config.yaml
+# Paths for raw data and output files
+repo_roots: /absolute/path/to/downloaded/cryptol/repos          # where raw repositories live
+mount_dir: /absolute/path/to/DataPreprocess/cryptol-files      # path where cryptol files are mounted
+metrics_csv: data/metrics.csv                                  # CSV created by 01_Metrics.ipynb
+jsonl_input: data/all_sources_raw.jsonl                        # list of raw file paths
+output_dir: data/processed                                     # directory for dataset outputs
+
+# Dataset builder settings
+variants: [with_comments, without_comments, hybrid]             # dataset variants to generate
+context_window_tokens: 2048
+prompt_reserve_tokens: 512
+chunk_overlap_tokens: 64
+chars_per_token: 4.0
+
+# Evaluation settings
+cryptol_server_url: http://localhost:8080                               # Cryptol remote API
+model_id: Qwen/Qwen3-Coder-30B-A3B-Instruct                     # HF model used for code generation
+temp_file: cryptol-files/generated.cry                         # temp file written for each task
+cryptol_path: files/generated.cry                              # path inside Cryptol server container
+evals_path: src/eval/.data/evals.jsonl                         # tasks created by 04_Build_Eval_Suite
+pythonpath: ~/Automated_Reasoning_for_Cryptography/DataPreprocess
+repo_roots: ~/Automated_Reasoning_for_Cryptography
+repos: [cryptol, cryptol-specs]
+
+system_prompt: "Return exactly ONE fenced code block labeled `cryptol` and nothing else (no prose before/after)."
+function_prompt_template: |
+  ### Instruction:
+  Write a Cryptol function that implements the tasks described below.
+
+  ### Request:
+  Task: {task}
+property_prompt_template: |
+  ### Instruction:
+  Write a Cryptol property that tests the function described below.
+
+  ### Request:
+  Task: {task}
+
+
