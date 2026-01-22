@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os, io, json, tempfile, pathlib
 from typing import List, Optional, Tuple, Union
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import pandas as pd
 # pip install cryptol
 import cryptol
@@ -55,11 +55,22 @@ def load_with_cryptol_server(
         kwargs["url"] = server_url
     cry = cryptol.connect(reset_server=reset_server, **kwargs)
 
+    p = PurePosixPath(container_relpath)
+    cdir = str(p.parent)     # "files/cryptol/examples"
+    base = p.name            # "tmp_ABC.cry"
+
     result: dict = {"load_ok": False, "file": container_relpath, "error": "None"}
 
     try:
         # Mirrors REPL ':load <file>'
-        load_file = cry.load_file(container_relpath).result()  # may raise if load fails
+        if hasattr(cry, "add_path"):
+            cry.add_path(cdir).result()
+            # Now load only by basename, like ":load tmp_ABC.cry"
+            load_file = cry.load_file(base).result()
+        else:
+            # Fallback if your cryptol client doesn't expose add_path:
+            # still loads by full path, but we keep the same interface/logging.
+            cry.load_file(f"{cdir}/{base}").result()
 
         result["load_ok"] = True
 
