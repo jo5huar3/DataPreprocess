@@ -1,5 +1,5 @@
 python src/util/code_parser.py ~/Automated_Reasoning_for_Cryptography/cryptol ~/Automated_Reasoning_for_Cryptography/cryptol-specs \
-    --ext .cry --out data/all_sources_raw.jsonl \
+    --ext .cry --out data/all_sources_raw_v1-0.jsonl \
     --strip ~/Automated_Reasoning_for_Cryptography/
 
 docker run --name cryptol-remote-api -d \
@@ -20,8 +20,8 @@ python -m pip install -r requirements.txt
 /home/cryptol/files/cryptol/examples/cryptol-specs
 
 python src/util/code_parser.py ~/Automated_Reasoning_for_Cryptography/cryptol_slices \
-    --ext .cry --out data/all_slices_raw_v2-0.jsonl \
-    --strip ~/Automated_Reasoning_for_Cryptography/
+    --ext .cry --out data/all_sources_raw_v1-0.jsonl \
+    --strip ~/Automated_Reasoning_for_Cryptography/ --append
 
 cabal run toy-cryptol-ast -- /Users/josh/Automated_Reasoning_for_Cryptography/cryptol-specs/Primitive/Symmetric/Cipher/Block/AES/Specification.cry \
   /Users/josh/Automated_Reasoning_for_Cryptography/slices 
