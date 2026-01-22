@@ -22,8 +22,8 @@ python -m pip install -r requirements.txt
 /home/cryptol/files/cryptol/examples/cryptol-specs
 
 python src/util/code_parser.py ~/Automated_Reasoning_for_Cryptography/cryptol_slices \
-    --ext .cry --out data/all_sources_raw_v1-0.jsonl \
-    --strip ~/Automated_Reasoning_for_Cryptography/ --append
+    --ext .cry --out data/some_slices_raw_v1-0.jsonl \
+    --strip ~/Automated_Reasoning_for_Cryptography/cryptol_slices
 
 cabal run toy-cryptol-ast -- /Users/josh/Automated_Reasoning_for_Cryptography/cryptol-specs/Primitive/Symmetric/Cipher/Block/AES/Specification.cry \
   /Users/josh/Automated_Reasoning_for_Cryptography/slices 
