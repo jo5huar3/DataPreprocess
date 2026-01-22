@@ -2,10 +2,9 @@
 # Paths for raw data and output files
 pythonpath: ~/Automated_Reasoning_for_Cryptography/DataPreprocess
 repo_root: ~/Automated_Reasoning_for_Cryptography
-mount_dir: /absolute/path/to/DataPreprocess/cryptol-files      # path where cryptol files are mounted
-metrics_csv: data/metrics.csv                                  # CSV created by 01_Metrics.ipynb
-jsonl_input: data/all_sources_raw.jsonl                        # list of raw file paths
-output_dir: data/processed                                     # directory for dataset outputs
+mount_dir: ~/Automated_Reasoning_for_Cryptography/DataPreprocess/cryptol-files      # path where cryptol files are mounted
+cryptol_path: files/generated.cry                              # path inside Cryptol server container
+cryptol_server_url: http://localhost:8080                               # Cryptol remote API
 
 # Dataset builder settings
 variants: [original, no_comments, hybrid]             # dataset variants to generate
@@ -15,11 +14,7 @@ chunk_overlap_tokens: 64
 chars_per_token: 4.0
 
 # Evaluation settings
-cryptol_server_url: http://localhost:8080                               # Cryptol remote API
 model_id: Qwen/Qwen3-Coder-30B-A3B-Instruct                     # HF model used for code generation
-temp_file: cryptol-files/generated.cry                         # temp file written for each task
-cryptol_path: files/generated.cry                              # path inside Cryptol server container
-evals_path: src/eval/.data/evals.jsonl                         # tasks created by 04_Build_Eval_Suite
 repos: [cryptol, cryptol-specs]
 version: v1-0
 
