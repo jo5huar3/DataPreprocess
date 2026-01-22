@@ -11,9 +11,11 @@ docker run --name cryptol-remote-api -d \
 
 docker run --name cryptol-remote-api -d \
   --platform linux/amd64 \
-  -v /Users/josh/Automated_Reasoning_for_Cryptography:/home/cryptol/files \
+  -v /Users/josh/Automated_Reasoning_for_Cryptography/cryptol-files:/home/cryptol/files \
+  -e CRYPTOLPATH="/home/cryptol/files/cryptol-specs:/home/cryptol/files/cryptol" \
   -p 8080:8080 \
   ghcr.io/galoisinc/cryptol-remote-api:3.3.0
+
 
 python -m pip install -r requirements.txt
 
