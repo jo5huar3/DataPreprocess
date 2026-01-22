@@ -2,7 +2,7 @@
 # Paths for raw data and output files
 pythonpath: ~/Automated_Reasoning_for_Cryptography/DataPreprocess
 repo_root: ~/Automated_Reasoning_for_Cryptography
-mount_dir: ~/Automated_Reasoning_for_Cryptography/DataPreprocess/cryptol-files      # path where cryptol files are mounted
+mount_dir: /Users/josh/Automated_Reasoning_for_Cryptography/cryptol-files      # path where cryptol files are mounted
 cryptol_path: files/generated.cry                              # path inside Cryptol server container
 cryptol_server_url: http://localhost:8080                               # Cryptol remote API
 
