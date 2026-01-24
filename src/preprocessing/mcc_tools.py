@@ -15,6 +15,145 @@ import pandas as pd
 # Core MCC computation utilities
 # -----------------------------
 
+CONTROL_EDGE_KINDS = {"control", "branch", "back"}
+
+def _reachable_from_entry(mcc_block: Dict[str, Any]) -> Set[int]:
+    """
+    Robustly restrict the MCC graph to real control-flow:
+      - only edges of kind in CONTROL_EDGE_KINDS
+      - only nodes reachable from entry via those edges
+
+    This prevents meta edges like "declares" from polluting node/edge counts.
+    """
+    nodes = mcc_block.get("nodes", []) or []
+    edges = mcc_block.get("edges", []) or []
+    node_ids = {n["id"] for n in nodes if "id" in n}
+
+    entry = mcc_block.get("entry")
+    if entry is None or entry not in node_ids:
+        return set()
+
+    adj = defaultdict(list)
+    for e in edges:
+        if e.get("kind") in CONTROL_EDGE_KINDS:
+            u, v = e.get("from"), e.get("to")
+            if u in node_ids and v in node_ids:
+                adj[u].append(v)
+
+    seen = {entry}
+    q = deque([entry])
+    while q:
+        cur = q.popleft()
+        for nxt in adj.get(cur, []):
+            if nxt not in seen:
+                seen.add(nxt)
+                q.append(nxt)
+    return seen
+
+
+def compute_mcc_robust(mcc_block: Optional[Dict[str, Any]]) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[int]]:
+    """
+    Same MCC formula, but computed on the reachable control-flow subgraph only.
+    Returns (M, E, N, P).
+    """
+    if not mcc_block:
+        return None, None, None, None
+
+    keep = _reachable_from_entry(mcc_block)
+    if not keep:
+        return None, None, None, None
+
+    nodes_all = mcc_block.get("nodes", []) or []
+    edges_all = mcc_block.get("edges", []) or []
+
+    nodes = [n for n in nodes_all if n.get("id") in keep]
+    edges = [
+        e for e in edges_all
+        if e.get("kind") in CONTROL_EDGE_KINDS and e.get("from") in keep and e.get("to") in keep
+    ]
+
+    E = len(edges)
+    N = len(nodes)
+    P = connected_components_count(nodes, edges) if nodes else 0
+    M = E - N + 2 * P if P else None
+    return M, E, N, P
+
+
+def iter_definitions_with_prefix(json_obj: Dict[str, Any], base_name: str) -> Iterable[Dict[str, Any]]:
+    """
+    Yield the definition whose name == base_name AND every definition that starts with f"{base_name}::".
+    Uses "::" boundary so 'pmult2' won't match 'pmult'.
+    """
+    prefix = base_name + "::"
+    for d in (json_obj.get("definitions", []) or []):
+        name = d.get("name") or ""
+        if name == base_name or name.startswith(prefix):
+            yield d
+
+
+def definition_stats_row(d: Dict[str, Any], json_path: Optional[Union[str, Path]] = None, base: Optional[str] = None) -> Dict[str, Any]:
+    name = d.get("name")
+    M, E, N, P = compute_mcc_robust(d.get("mcc"))  # <-- robust MCC
+
+    return {
+        "json_path": str(json_path) if json_path is not None else None,
+        "base": base,
+        "definition_name": name,
+        "depth": (name.count("::") if isinstance(name, str) else None),
+        "kind": d.get("kind"),
+        "signature": d.get("signature"),
+        "mcc": M,
+        "edges_E": E,
+        "nodes_N": N,
+        "components_P": P,
+        "num_params": len(d.get("params") or []),
+        "num_locals": len(d.get("locals") or []),
+        "num_references": len(d.get("references") or []),
+    }
+
+
+def definition_group_stats_df(
+    json_obj: Dict[str, Any],
+    base_name: str,
+    json_path: Optional[Union[str, Path]] = None,
+) -> pd.DataFrame:
+    """
+    One row per definition in the prefix group.
+    """
+    rows = [definition_stats_row(d, json_path=json_path, base=base_name) for d in iter_definitions_with_prefix(json_obj, base_name)]
+    df = pd.DataFrame(rows)
+
+    if not df.empty:
+        df["mcc"] = pd.to_numeric(df["mcc"], errors="coerce")
+        df = df.sort_values(["depth", "definition_name"], ascending=[True, True]).reset_index(drop=True)
+
+    return df
+
+
+def summarize_definition_group(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Summary for a prefix group.
+    Includes:
+      - sum_mcc: sum of MCC scores of all definitions in the group
+      - inline_mcc: 1 + sum(M_i - 1)  (good for "top-level + where locals")
+    """
+    if df.empty:
+        return {"num_defs": 0, "sum_mcc": None, "inline_mcc": None, "max_mcc": None, "avg_mcc": None}
+
+    m = df["mcc"].dropna()
+    if m.empty:
+        return {"num_defs": int(len(df)), "sum_mcc": None, "inline_mcc": None, "max_mcc": None, "avg_mcc": None}
+
+    m = m.astype(int)
+    inline = int(1 + (m - 1).sum())
+    return {
+        "num_defs": int(len(df)),
+        "sum_mcc": int(m.sum()),
+        "inline_mcc": inline,
+        "max_mcc": int(m.max()),
+        "avg_mcc": float(m.mean()),
+    }
+
 def connected_components_count(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> int:
     """
     Count connected components P in the CFG using an undirected view.
@@ -495,6 +634,20 @@ class MCCCorpus:
     ) -> Dict[str, Any]:
         obj = load_json(json_path)
         return definition_mcc_tree(obj, roots=roots, max_depth=max_depth, only_return=only_return)
+
+    def get_stats(
+        self,
+        json_path: Union[str, Path],
+        definition_name: str,
+    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """
+        Returns (df, summary) where df has one row per definition:
+          definition_name AND all definitions prefixed with 'definition_name::'
+        """
+        obj = load_json(json_path)
+        df = definition_group_stats_df(obj, base_name=definition_name, json_path=json_path)
+        summary = summarize_definition_group(df)
+        return df, summary
 
 
 # -----------------------------
