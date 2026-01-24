@@ -28,15 +28,16 @@ python src/util/code_parser.py ~/Automated_Reasoning_for_Cryptography/cryptol_sl
 cabal run toy-cryptol-ast -- /Users/josh/Automated_Reasoning_for_Cryptography/cryptol-specs/Primitive/Symmetric/Cipher/Block/AES/Specification.cry \
   /Users/josh/Automated_Reasoning_for_Cryptography/slices 
 
-python src/util/code_parser.py /Users/josh/SecurityAnalytics/AES-GCM-SIV-proof \
-   /Users/josh/SecurityAnalytics/aws-lc-verification \
-   /Users/josh/SecurityAnalytics/BLST-Verification \
-   /Users/josh/SecurityAnalytics/ckzg-eip-4844-verification \
-   /Users/josh/SecurityAnalytics/cryptol \
-   /Users/josh/SecurityAnalytics/cryptol-specs \
-   /Users/josh/SecurityAnalytics/formal-verso \
-   /Users/josh/SecurityAnalytics/saw-script \
-    --strip /Users/josh/SecurityAnalytics/ -o data/all_sources_raw.jsonl
+python src/util/code_parser.py \
+   /Users/josh/Automated_Reasoning_for_Cryptography/AES-GCM-SIV-proof \
+   /Users/josh/Automated_Reasoning_for_Cryptography/aws-lc-verification \
+   /Users/josh/Automated_Reasoning_for_Cryptography/BLST-Verification \
+   /Users/josh/Automated_Reasoning_for_Cryptography/ckzg-eip-4844-verification \
+   /Users/josh/Automated_Reasoning_for_Cryptography/cryptol \
+   /Users/josh/Automated_Reasoning_for_Cryptography/cryptol-specs \
+   /Users/josh/Automated_Reasoning_for_Cryptography/formal-verso \
+   /Users/josh/Automated_Reasoning_for_Cryptography/saw-script \
+    --strip /Users/josh/Automated_Reasoning_for_Cryptography/ -o data/all_sources_raw.jsonl
 
 
 git rev-parse HEAD 
