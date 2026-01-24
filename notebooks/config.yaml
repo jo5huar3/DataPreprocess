@@ -5,6 +5,7 @@ repo_root: ~/Automated_Reasoning_for_Cryptography
 mount_dir: /Users/josh/Automated_Reasoning_for_Cryptography/cryptol-files      # path where cryptol files are mounted
 cryptol_path: files/generated.cry                              # path inside Cryptol server container
 cryptol_server_url: http://localhost:8080                               # Cryptol remote API
+mcc_root: ~/Automated_Reasoning_for_Cryptography/mcc_files
 
 # Dataset builder settings
 variants: [original, no_comments, hybrid]             # dataset variants to generate
