@@ -91,6 +91,7 @@ def verify_df_row_with_cryptol(
     idx: int,
     host_mount_dir: str,
     server_url: Optional[str] = None,
+    source_filename_override: Optional[str] = None,
 ) -> dict:
     """
     Take row `idx` from df, write to mounted temp file, and ask Cryptol server to load it.
@@ -102,10 +103,12 @@ def verify_df_row_with_cryptol(
     code = row["content"]
     prefer_name = row.get("filename") if "filename" in df.columns else None
 
+    source_filename = source_filename_override or row["filename"]
+    
     host_path, container_relpath = write_cryptol_tempfile(
         code=code,
         host_mount_dir=host_mount_dir,
-        source_filename=row["filename"],
+        source_filename=source_filename,
         prefer_name=prefer_name,
     )
 
@@ -249,10 +252,17 @@ def minimize_imports(
     final_code = "\n".join(header + imports + body) + "\n"
     return final_code, n_orig, n_final
 
+def filename_for_cryptol_load(filename: str, strip_prefix: str = "cryptol_slices/") -> str:
+    # Case-sensitive, POSIX style
+    if filename.startswith(strip_prefix):
+        return filename[len(strip_prefix):]
+    return filename
+
 def process_sliced_df_to_df(
     df: pd.DataFrame,
     host_mount_dir: str,
     server_url: Optional[str] = None,
+    strip_prefix: str = "cryptol_slices/",
 ) -> pd.DataFrame:
     """
     Given a DataFrame with columns 'filename' (relative path of the original .cry
@@ -260,48 +270,53 @@ def process_sliced_df_to_df(
 
     Returns a DataFrame with only passing rows.
     """
-
     if server_url is None:
         server_url = os.getenv("CRYPTOL_SERVER_URL", "http://localhost:8080")
 
     rows = []
-    first_reset = True
     total_files = 0
     n_pass = 0
     n_fail = 0
+
     for idx, row in df.iterrows():
         total_files += 1
+
+        stored_filename = row["filename"]  # keep as-is in dataset
+        load_filename = filename_for_cryptol_load(stored_filename, strip_prefix=strip_prefix)
+
         load_info = verify_df_row_with_cryptol(
             df=df,
             idx=idx,
             host_mount_dir=str(host_mount_dir),
             server_url=server_url,
+            source_filename_override=load_filename,  
         )
         li = load_info["load_info"]
         if not li.get("load_ok", False):
             n_fail += 1
-            print(f"File failed to load: {load_info['container_relpath']}")
-
+            print(f"File failed to load: stored={stored_filename} load_as={load_filename}")
             continue
 
         n_pass += 1
+
         final_code, n_orig, n_final = minimize_imports(
             code=row["content"],
-            file_relpath=row["filename"],
+            file_relpath=load_filename,     
             host_mount_dir=host_mount_dir,
             server_url=server_url,
         )
 
         rows.append({
-            "filename": row["filename"],
+            # Keep your augmented path in the dataset
+            "filename": stored_filename,
             "filetype": "cry",
             "content": final_code,
             "n_imports_original": n_orig,
             "n_imports_final": n_final,
         })
+
     print(f"Processed {total_files} files: {n_pass} passed, {n_fail} failed.")
     return pd.DataFrame(rows)
-
 
 
 # Example usage:
