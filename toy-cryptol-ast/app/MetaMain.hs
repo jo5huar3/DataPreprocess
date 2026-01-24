@@ -23,13 +23,14 @@ import Cryptol.Parser (parseModule, defaultConfig, Config(..))
 import Cryptol.Parser.AST
   ( PName, TopDecl(..), Decl(..), TopLevel(..)
   , Bind(..), BindImpl(..), Schema(..), TySyn(..), Type(..), Prop(..)
+  , TParam(..) 
   , Expr(..), Match(..), CaseAlt(..), UpdField(..), PropGuardCase(..), Pattern(..)
   , mDecls, tsName, bindImpl, bindParams, value
   )
 
 import Cryptol.Parser.Position (thing)
 import Cryptol.Utils.PP (pretty)
-import Cryptol.Utils.RecordMap (recordElements)
+import Cryptol.Utils.RecordMap (recordElements, displayFields)
 
 --------------------------------------------------------------------------------
 -- JSON types
@@ -568,10 +569,19 @@ topLevelEntries = concatMap goTD
 
     goDecl d =
       case d of
-        DType ts ->
-          let nm = thing (tsName ts)
-              raw = Set.map prettyName (namesInType (tySynRHS ts))
-          in [ TopEntry nm TKType Nothing Set.empty Set.empty (Set.map id raw) ]
+        DType ts@(TySyn _ _ tps _) ->
+          let nm      = thing (tsName ts)
+              ty      = tySynRHS ts
+
+              -- ✅ type parameters: KeySize, BlockSize, etc.
+              tyParams = Set.fromList [ pretty (tpName tp) | tp <- tps ]
+
+              -- ✅ record fields: encrypt, decrypt, etc.
+              fields  = recordFieldNamesInType ty
+
+              rawTys  = Set.map prettyName (namesInType ty)
+              rawRefs = rawTys `Set.union` fields
+          in [ TopEntry nm TKType Nothing tyParams fields rawRefs ]
 
         DBind b ->
           let nm     = thing (bName b)
@@ -621,6 +631,16 @@ implBodyExprs mi =
     Just (DExpr e)        -> [e]
     Just (DPropGuards cs) -> [ pgcExpr c | c <- cs ]
     _                     -> []
+
+recordFieldNamesInType :: Type PName -> Set.Set String
+recordFieldNamesInType ty =
+  case ty of
+    -- fs :: Rec (Type PName)  (a RecordMap)
+    -- displayFields :: RecordMap a b -> [(a,b)]
+    TRecord fs     -> Set.fromList [ pretty f | (f, _) <- displayFields fs ]
+    TLocated t _   -> recordFieldNamesInType t
+    TParens t _    -> recordFieldNamesInType t
+    _              -> Set.empty
 
 patVarName :: Pattern PName -> Maybe PName
 patVarName p =
@@ -1130,7 +1150,7 @@ namesInType ty =
     TChar _        -> Set.empty
     TUser n args   -> Set.insert (thing n) (Set.unions (map namesInType args))
     TTyApp ts      -> Set.unions [ namesInType (value t) | t <- ts ]
-    TRecord _      -> Set.empty
+    TRecord fs      -> Set.unions [ namesInType t | (_, t) <- recordElements fs ]
     TTuple ts      -> Set.unions (map namesInType ts)
     TWild          -> Set.empty
     TLocated t _   -> namesInType t
