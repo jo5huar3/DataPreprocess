@@ -12,7 +12,7 @@ docker run --name cryptol-remote-api -d \
 docker run --name cryptol-remote-api -d \
   --platform linux/amd64 \
   -v /Users/josh/Automated_Reasoning_for_Cryptography/cryptol-files:/home/cryptol/files \
-  -e CRYPTOLPATH="/home/cryptol/files/cryptol-specs:/home/cryptol/files/cryptol" \
+  -e CRYPTOLPATH="/home/cryptol/files/cryptol-specs:/home/cryptol/files/cryptol:/home/cryptol/files/aws-lc-verification/cryptol-specs:/home/cryptol/files/aws-lc-verification/cryptol-specs-aes-gcm" \
   -p 8080:8080 \
   ghcr.io/galoisinc/cryptol-remote-api:3.3.0
 
@@ -37,8 +37,8 @@ python src/util/code_parser.py \
    /Users/josh/Automated_Reasoning_for_Cryptography/cryptol-specs \
    /Users/josh/Automated_Reasoning_for_Cryptography/formal-verso \
    /Users/josh/Automated_Reasoning_for_Cryptography/saw-script \
-    --strip /Users/josh/Automated_Reasoning_for_Cryptography/ -o data/all_sources_raw.jsonl
-
+    --ext .cry -o data/all_sources_raw_v1-0.jsonl \
+    --strip /Users/josh/Automated_Reasoning_for_Cryptography/ 
 
 git rev-parse HEAD 
 git log -1 --oneline 
