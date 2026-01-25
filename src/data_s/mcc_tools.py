@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import json
 from collections import defaultdict, deque
@@ -7,14 +6,11 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
-
 import pandas as pd
-
 
 # -----------------------------
 # Core MCC computation utilities
 # -----------------------------
-
 CONTROL_EDGE_KINDS = {"control", "branch", "back"}
 
 def _reachable_from_entry(mcc_block: Dict[str, Any]) -> Set[int]:
@@ -50,7 +46,6 @@ def _reachable_from_entry(mcc_block: Dict[str, Any]) -> Set[int]:
                 q.append(nxt)
     return seen
 
-
 def compute_mcc_robust(mcc_block: Optional[Dict[str, Any]]) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[int]]:
     """
     Same MCC formula, but computed on the reachable control-flow subgraph only.
@@ -78,7 +73,6 @@ def compute_mcc_robust(mcc_block: Optional[Dict[str, Any]]) -> Tuple[Optional[in
     M = E - N + 2 * P if P else None
     return M, E, N, P
 
-
 def iter_definitions_with_prefix(json_obj: Dict[str, Any], base_name: str) -> Iterable[Dict[str, Any]]:
     """
     Yield the definition whose name == base_name AND every definition that starts with f"{base_name}::".
@@ -89,7 +83,6 @@ def iter_definitions_with_prefix(json_obj: Dict[str, Any], base_name: str) -> It
         name = d.get("name") or ""
         if name == base_name or name.startswith(prefix):
             yield d
-
 
 def definition_stats_row(d: Dict[str, Any], json_path: Optional[Union[str, Path]] = None, base: Optional[str] = None) -> Dict[str, Any]:
     name = d.get("name")
@@ -111,7 +104,6 @@ def definition_stats_row(d: Dict[str, Any], json_path: Optional[Union[str, Path]
         "num_references": len(d.get("references") or []),
     }
 
-
 def definition_group_stats_df(
     json_obj: Dict[str, Any],
     base_name: str,
@@ -128,7 +120,6 @@ def definition_group_stats_df(
         df = df.sort_values(["depth", "definition_name"], ascending=[True, True]).reset_index(drop=True)
 
     return df
-
 
 def summarize_definition_group(df: pd.DataFrame) -> Dict[str, Any]:
     """
@@ -185,7 +176,6 @@ def connected_components_count(nodes: List[Dict[str, Any]], edges: List[Dict[str
     # If there are nodes but no edges, P == number of isolated nodes (per the formula).
     return comps
 
-
 def compute_mcc(mcc_block: Optional[Dict[str, Any]]) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[int]]:
     """
     McCabe Cyclomatic Complexity:
@@ -207,7 +197,6 @@ def compute_mcc(mcc_block: Optional[Dict[str, Any]]) -> Tuple[Optional[int], Opt
     M = E - N + 2 * P
     return M, E, N, P
 
-
 def find_definition(json_obj: Dict[str, Any], definition_name: str) -> Dict[str, Any]:
     """
     Find a definition by exact name in json_obj["definitions"].
@@ -218,7 +207,6 @@ def find_definition(json_obj: Dict[str, Any], definition_name: str) -> Dict[str,
             return d
     raise KeyError(f"Definition '{definition_name}' not found.")
 
-
 def definition_mcc_from_obj(json_obj: Dict[str, Any], definition_name: str) -> Optional[int]:
     """
     Return MCC score for one definition name from a parsed json object.
@@ -227,7 +215,6 @@ def definition_mcc_from_obj(json_obj: Dict[str, Any], definition_name: str) -> O
     M, _, _, _ = compute_mcc(d.get("mcc"))
     return M
 
-
 def definition_mcc_from_json_str(json_str: str, definition_name: str) -> Optional[int]:
     """
     Return MCC score for one definition name from a JSON string.
@@ -235,15 +222,12 @@ def definition_mcc_from_json_str(json_str: str, definition_name: str) -> Optiona
     obj = json.loads(json_str)
     return definition_mcc_from_obj(obj, definition_name)
 
-
 # -----------------------------
 # CFG ("MCC graph") extraction
 # -----------------------------
-
 def _nodes_by_id(mcc_block: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
     nodes = mcc_block.get("nodes", []) or []
     return {n["id"]: n for n in nodes if "id" in n}
-
 
 def cfg_subgraph(
     mcc_block: Dict[str, Any],
@@ -271,7 +255,6 @@ def cfg_subgraph(
         exit_ = None
 
     return {"entry": entry, "exit": exit_, "nodes": kept_nodes, "edges": kept_edges}
-
 
 def cfg_spanning_tree(
     mcc_block: Dict[str, Any],
@@ -339,11 +322,9 @@ def cfg_spanning_tree(
         out["nodes"] = {nid: id_to_node[nid] for nid in visited}
     return out
 
-
 # -----------------------------
 # Definition dependency ("MCC tree") extraction
 # -----------------------------
-
 def _definition_dependency_map(json_obj: Dict[str, Any]) -> Dict[str, Set[str]]:
     """
     Builds a map:
@@ -364,7 +345,6 @@ def _definition_dependency_map(json_obj: Dict[str, Any]) -> Dict[str, Set[str]]:
                 dep[name].add(callee)
 
     return dep
-
 
 def definition_mcc_tree(
     json_obj: Dict[str, Any],
@@ -443,11 +423,9 @@ def definition_mcc_tree(
 
     return result
 
-
 # -----------------------------
 # Summary indexing (1 row per JSON file)
 # -----------------------------
-
 def summarize_file_obj(json_obj: Dict[str, Any]) -> Dict[str, Any]:
     defs = json_obj.get("definitions", []) or []
 
@@ -476,7 +454,6 @@ def summarize_file_obj(json_obj: Dict[str, Any]) -> Dict[str, Any]:
         "avg_mcc": (float(sum(decl_scores)) / float(len(decl_scores))) if decl_scores else None,
     }
 
-
 @lru_cache(maxsize=64)
 def _load_json_cached(path_str: str, mtime_ns: int) -> Dict[str, Any]:
     """
@@ -485,12 +462,10 @@ def _load_json_cached(path_str: str, mtime_ns: int) -> Dict[str, Any]:
     p = Path(path_str)
     return json.loads(p.read_text(encoding="utf-8"))
 
-
 def load_json(path: Union[str, Path]) -> Dict[str, Any]:
     p = Path(path)
     st = p.stat()
     return _load_json_cached(str(p), st.st_mtime_ns)
-
 
 def build_summary_df(
     json_paths: Iterable[Union[str, Path]],
@@ -522,7 +497,6 @@ def build_summary_df(
         df = df.sort_values("total_mcc", ascending=False)
 
     return df
-
 
 def build_definition_index_df(json_paths: Iterable[Union[str, Path]]) -> pd.DataFrame:
     """
@@ -557,11 +531,9 @@ def build_definition_index_df(json_paths: Iterable[Union[str, Path]]) -> pd.Data
         df = df.sort_values(["mcc", "json_path", "definition_name"], ascending=[False, True, True])
     return df
 
-
 # -----------------------------
 # High-level convenience class
 # -----------------------------
-
 @dataclass
 class MCCCorpus:
     """
@@ -649,11 +621,9 @@ class MCCCorpus:
         summary = summarize_definition_group(df)
         return df, summary
 
-
 # -----------------------------
 # CLI
 # -----------------------------
-
 def _cmd_index(args: argparse.Namespace) -> int:
     corpus = MCCCorpus.from_dir(args.input, pattern=args.pattern, recursive=not args.no_recursive)
     df = corpus.summary_df()
@@ -676,13 +646,11 @@ def _cmd_index(args: argparse.Namespace) -> int:
     print(df[cols].head(args.head).to_string(index=False))
     return 0
 
-
 def _cmd_mcc(args: argparse.Namespace) -> int:
     corpus = MCCCorpus.from_paths([args.json])
     score = corpus.get_mcc(args.json, args.definition)
     print(score)
     return 0
-
 
 def _cmd_tree(args: argparse.Namespace) -> int:
     corpus = MCCCorpus.from_paths([args.json])
@@ -696,7 +664,6 @@ def _cmd_tree(args: argparse.Namespace) -> int:
     print(json.dumps(tree, indent=2))
     return 0
 
-
 def _cmd_def_tree(args: argparse.Namespace) -> int:
     corpus = MCCCorpus.from_paths([args.json])
     roots = args.roots
@@ -704,7 +671,6 @@ def _cmd_def_tree(args: argparse.Namespace) -> int:
     out = corpus.get_definition_mcc_trees(args.json, roots=roots, max_depth=args.depth, only_return=only)
     print(json.dumps(out, indent=2))
     return 0
-
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="mcc_tools", description="MCC JSON processing utilities")
@@ -749,7 +715,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             pass
 
     return args.func(args)
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
