@@ -1,0 +1,25 @@
+File path: {{ filename }}
+
+{% if rag_context %}
+Relevant Cryptol knowledge (for your analysis only — do not quote verbatim and do not include any code in the instruction):
+-----8<-----
+{{ rag_context }}
+-----8<-----
+{% endif %}
+
+Task: Generate exactly ONE AlpacaRow as JSON with keys: instruction, input, output.
+
+Hard rules:
+- The instruction MUST be standalone: the assistant who will write the Cryptol file will NOT see this excerpt.
+- The instruction must request ONLY Cryptol source code (do NOT ask for SAWScript, external proofs, or non-Cryptol artifacts).
+- Do NOT include any Cryptol snippets or fenced code blocks in the instruction.
+  - No triple backticks, no inline backticks, and do not paste lines from the excerpt or RAG context.
+  - You may mention module/function names and describe types/IO in prose, but do not format them as code.
+- Set input to "" (empty string).
+- Set output to "" (empty string).
+- Keep the instruction <= 150 words.
+
+Code excerpt (context for you only; never copy verbatim into the instruction):
+-----8<-----
+{{ code_excerpt }}
+-----8<-----
