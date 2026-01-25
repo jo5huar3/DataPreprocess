@@ -10,11 +10,10 @@ Relevant Cryptol knowledge (for your analysis only — do not quote verbatim and
 Task: Generate exactly ONE AlpacaRow as JSON with keys: instruction, input, output.
 
 Hard rules:
-- The instruction MUST be standalone: the assistant who will write the Cryptol file will NOT see this excerpt.
+- The instruction MUST be standalone: the assistant who will write the Cryptol specification will NOT have access to the code_excerpt or rag_context.
 - The instruction must request ONLY Cryptol source code.
 - Do NOT include any Cryptol snippets or fenced code blocks in the instruction.
   - No triple backticks, no inline backticks, and do not paste lines from the excerpt or RAG context.
-- Do NOT use the word 'module' to describe a code_excerpt unless it appears in the code_excerpt itself.
 - Set input to "" (empty string).
 - Set output to "" (empty string).
 
