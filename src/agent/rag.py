@@ -376,13 +376,16 @@ def retrieve(
     )
 
     hits = []
+    seen_sources = set()
     for doc, meta, dist, _id in zip(
         res["documents"][0],
         res["metadatas"][0],
         res["distances"][0],
         res["ids"][0],  # ✅ ids still returned automatically
     ):
-        hits.append({"id": _id, "text": doc, "meta": meta, "distance": dist})
+        if meta["source"] not in seen_sources:
+            hits.append({"id": _id, "text": doc, "meta": meta, "distance": dist})
+            seen_sources.add(meta["source"])
     return hits
 
 # Convert list of chunks into a single context string.
