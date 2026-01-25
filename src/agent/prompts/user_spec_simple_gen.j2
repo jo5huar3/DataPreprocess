@@ -11,13 +11,26 @@ Task: Generate exactly ONE AlpacaRow as JSON with keys: instruction, input, outp
 
 Hard rules:
 - The instruction MUST be standalone: the assistant who will write the Cryptol file will NOT see this excerpt.
-- The instruction must request ONLY Cryptol source code (do NOT ask for SAWScript, external proofs, or non-Cryptol artifacts).
+- The instruction must request ONLY Cryptol source code.
 - Do NOT include any Cryptol snippets or fenced code blocks in the instruction.
   - No triple backticks, no inline backticks, and do not paste lines from the excerpt or RAG context.
-  - You may mention module/function names and describe types/IO in prose, but do not format them as code.
+- Do NOT use the word 'module' to describe a code_excerpt unless it appears in the code_excerpt itself.
 - Set input to "" (empty string).
 - Set output to "" (empty string).
-- Keep the instruction <= 150 words.
+
+Length rules (STRICT):
+- Keep the instruction <= {{ instruction_max_words }} words.
+- Detail level: {{ instruction_detail_level }}.
+{% if is_thin_wrapper %}
+- This file is a thin wrapper/specialization. Do NOT describe the underlying algorithm or add extra API/features not implied by the excerpt.
+{% endif %}
+
+Terminology rule (STRICT):
+{% if has_module_header %}
+- Use the word "module" in the instruction and request a Cryptol module implementation.
+{% else %}
+- Do NOT use the word "module" in the instruction; request Cryptol snippet/specification/code/definitions only (module is a keyword and this is not a module).
+{% endif %}
 
 Code excerpt (context for you only; never copy verbatim into the instruction):
 -----8<-----

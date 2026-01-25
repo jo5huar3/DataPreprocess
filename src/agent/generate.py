@@ -40,6 +40,7 @@ from pydantic import BaseModel
 
 # ---- Your existing cache utility (kept unchanged) ----
 from src.util.file_kv_cache import FileKVCache
+from src.data_s.properties import get_simple_instruction_limits, contains_module
 dotenv.load_dotenv()
 
 # ---------- Import your rag.py (supports both relative + absolute) ----------
@@ -312,7 +313,7 @@ def build_prompt_call_pydantic_ai(
 
     user_prompt = prompt_renderer.render(templates.spec_user, **ctx)
     print(user_prompt)
-    
+
     run_result = _agent_run_compat(agent, user_prompt)
     out: AlpacaRow = run_result.output
 
@@ -361,7 +362,14 @@ def iter_call_pydantic_ai(
                 templates=spec_templates,
                 **kwargs,
             )
-
+        limits = get_simple_instruction_limits(
+            num_declarations=row["num_declarations"],
+            total_mcc=row["total_mcc"]
+        )
+        extra_vars = {
+            "has_module_header": contains_module(row["content"]),
+            **limits
+        }
         # IMPORTANT: include templates in cache key to avoid stale reuse
         cache_key = "|".join(
             [
@@ -383,6 +391,7 @@ def iter_call_pydantic_ai(
                 "filename": row["filename"],
                 "lang": row["filetype"],
                 "code": row["content"],
+                "extra_vars": extra_vars,
             },
         )
 
