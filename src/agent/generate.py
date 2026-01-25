@@ -32,14 +32,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Type, Union
-
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import dotenv
 import pandas as pd
 from pydantic import BaseModel
 
 # ---- Your existing cache utility (kept unchanged) ----
 from src.util.file_kv_cache import FileKVCache
-
 dotenv.load_dotenv()
 
 # ---------- Import your rag.py (supports both relative + absolute) ----------
@@ -107,6 +107,11 @@ class ModelConfig:
     model: str = os.getenv("SYNTH_MODEL", "gpt-4.1-mini")
     retries: int = int(os.getenv("SYNTH_RETRIES", "2"))
 
+@dataclass(frozen=True)
+class TemplateBundle:
+    # “spec generation” (AlpacaRow)
+    spec_system: str = "system_spec_instruction.j2"
+    spec_user: str = "user_alpaca_instruction.j2"
 
 # =========================
 #   Prompt rendering
@@ -125,6 +130,27 @@ class PromptRenderer:
     def render(self, name: str, **ctx: Any) -> str:
         return self.env.get_template(name).render(**ctx)
 
+class AgentRegistry:
+    def __init__(self, model_cfg: ModelConfig, renderer: PromptRenderer):
+        self.model_name = _normalize_model(model_cfg.model)
+        self.retries = model_cfg.retries
+        self.renderer = renderer
+        self._cache: Dict[Tuple[str, Type[BaseModel]], Agent[Any, Any]] = {}
+
+    def get(self, system_template: str, output_type: Type[BaseModel]) -> Agent[Any, Any]:
+        key = (system_template, output_type)
+        if key in self._cache:
+            return self._cache[key]
+
+        system_prompt = self.renderer.render(system_template).strip()
+        agent = Agent(
+            self.model_name,
+            output_type=output_type,
+            system_prompt=system_prompt,
+            retries=self.retries,
+        )
+        self._cache[key] = agent
+        return agent
 
 # =========================
 #   RAG helpers
@@ -133,6 +159,32 @@ _CRYPTOL_MODULE_RE = re.compile(r"^\s*module\s+([A-Za-z0-9_:$]+)", re.MULTILINE)
 _CRYPTOL_IMPORT_RE = re.compile(r"^\s*import\s+`?([A-Za-z0-9_:$:./-]+)`?", re.MULTILINE)
 _SAW_IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z0-9_.$:/-]+)", re.MULTILINE)
 
+def _agent_run_compat(agent, user_prompt: str):
+    """
+    Run a pydantic_ai Agent in BOTH:
+      - normal scripts (no running loop)
+      - notebooks (loop already running)
+
+    Returns the pydantic_ai RunResult (same shape as run_sync).
+    """
+    async def _coro():
+        return await agent.run(user_prompt)
+
+    try:
+        # If this succeeds, we're in an environment with a running loop (e.g., Jupyter)
+        asyncio.get_running_loop()
+        running = True
+    except RuntimeError:
+        running = False
+
+    if not running:
+        # Normal python execution
+        return asyncio.run(_coro())
+
+    # Jupyter / already-running loop: run in a separate thread with its own loop
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(lambda: asyncio.run(_coro()))
+        return fut.result()
 
 def _safe_excerpt(text: str, max_chars: int) -> str:
     text = text or ""
@@ -203,23 +255,16 @@ def _normalize_model(model: str) -> str:
         return model
     return f"openai:{model}"
 
-
 def build_agents(
     model_cfg: ModelConfig,
-    prompt_cfg: PromptConfig,
+    prompt_renderer: PromptRenderer,
+    *,
+    spec_templates: TemplateBundle,
 ) -> Dict[str, Agent[Any, Any]]:
-    """
-    Create agents for:
-      - AlpacaRow instruction generation
-      - QAPairList generation (scraped web page)
-    """
-    renderer = PromptRenderer(prompt_cfg.template_dir)
-
-    system_spec = renderer.render("system_spec_instruction.j2").strip()
-    system_qa = renderer.render("system_qa.j2").strip()
-
     model_name = _normalize_model(model_cfg.model)
 
+    # Spec agent (AlpacaRow)
+    system_spec = prompt_renderer.render(spec_templates.spec_system).strip()
     alpaca_agent: Agent[None, AlpacaRow] = Agent(
         model_name,
         output_type=AlpacaRow,
@@ -227,84 +272,58 @@ def build_agents(
         retries=model_cfg.retries,
     )
 
-    qa_agent: Agent[None, QAPairList] = Agent(
-        model_name,
-        output_type=QAPairList,
-        system_prompt=system_qa,
-        retries=model_cfg.retries,
-    )
+    agent = alpaca_agent
 
-    return {
-        "alpaca": alpaca_agent,
-        "qa": qa_agent,
-    }
 
+    return agent
 
 # =========================
 #   Main call (replacement)
 # =========================
 def build_prompt_call_pydantic_ai(
-    agents: Dict[str, Agent[Any, Any]],
+    agent: Agent[Any, Any],
     prompt_cfg: PromptConfig,
     rag_cfg: RAGConfig,
+    prompt_renderer: PromptRenderer,
     *,
+    templates: TemplateBundle,
     input_mode: str,
     filename: str,
     lang: str,
     code: str,
+    extra_vars: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """
-    Replacement for build_prompt_call_openai_structured(...).
-
-    Returns:
-      - For code files: AlpacaRow dict
-      - For text files: QAPairList dict
-    """
-    renderer = PromptRenderer(prompt_cfg.template_dir)
-
-    # ---- Common trimming ----
     code_excerpt = _safe_excerpt(code, prompt_cfg.max_code_chars)
 
-    # ---- Optional RAG context ----
     rag_context = ""
-    if rag_cfg.enabled and lang.lower() != "text":
+    if rag_cfg.enabled:
         rag_query = build_rag_query(filename=filename, lang=lang, code=code)
         rag_context = get_rag_context(rag_query, rag_cfg)
 
-    # ---- Build user prompt from templates ----
-    if lang.lower() == "text":
-        user_prompt = renderer.render(
-            "user_qa_pairs.j2",
-            filename=filename,
-            page_markdown=code_excerpt,
-        )
-        result = agents["qa"].run_sync(user_prompt).output
-        return result.model_dump()
+    ctx: Dict[str, Any] = {
+        "filename": filename,
+        "lang": lang,
+        "code_excerpt": code_excerpt,
+        "rag_context": rag_context,
+        "input_max_chars": prompt_cfg.input_max_chars,
+    }
+    if extra_vars:
+        ctx.update(extra_vars)
 
-    # Non-text: produce AlpacaRow
-    user_prompt = renderer.render(
-        "user_alpaca_instruction.j2",
-        filename=filename,
-        lang=lang,
-        rag_context=rag_context,
-        code_excerpt=code_excerpt,
-        input_max_chars=prompt_cfg.input_max_chars,
-    )
+    user_prompt = prompt_renderer.render(templates.spec_user, **ctx)
+    print(user_prompt)
+    
+    run_result = _agent_run_compat(agent, user_prompt)
+    out: AlpacaRow = run_result.output
 
-    out: AlpacaRow = agents["alpaca"].run_sync(user_prompt).output
-
-    # Enforce your dataset invariants (even if the model "helpfully" fills them)
     out.output = ""
-    if input_mode == "none":
-        out.input = ""
-    elif input_mode == "excerpt":
-        out.input = _safe_excerpt(code, prompt_cfg.input_max_chars).replace("\n…(truncated)…\n", "")
-    else:
-        # input_mode == "full" (or anything else)
-        out.input = _safe_excerpt(code, prompt_cfg.input_max_chars).replace("\n…(truncated)…\n", "")
+    out.input = "" if input_mode == "none" else _safe_excerpt(code, prompt_cfg.input_max_chars).replace("\n…(truncated)…\n", "")
+
+    # If you NEVER want code fences in instruction:
+    if "```" in out.instruction:
+        out.instruction = out.instruction.replace("```cryptol", "").replace("```", "").strip()
 
     return out.model_dump()
-
 
 def iter_call_pydantic_ai(
     input_df: pd.DataFrame,
@@ -314,31 +333,50 @@ def iter_call_pydantic_ai(
     model_cfg: Optional[ModelConfig] = None,
     prompt_cfg: Optional[PromptConfig] = None,
     rag_cfg: Optional[RAGConfig] = None,
+    spec_templates: Optional[TemplateBundle] = None,           # NEW
+    qa_templates: Optional["QATemplateBundle"] = None,         # optional
 ) -> pd.DataFrame:
-    """
-    Drop-in replacement for iter_call_openai_structured(...)
-
-    Expects input_df columns:
-      - filename
-      - filetype
-      - content
-      - set
-    """
     model_cfg = model_cfg or ModelConfig()
     prompt_cfg = prompt_cfg or PromptConfig()
     rag_cfg = rag_cfg or RAGConfig()
+    spec_templates = spec_templates or TemplateBundle()
 
-    agents = build_agents(model_cfg, prompt_cfg)
+    prompt_renderer = PromptRenderer(prompt_cfg.template_dir)
+    agents = build_agents(
+        model_cfg,
+        prompt_renderer,
+        spec_templates=spec_templates,
+    )
 
     fileKVCache = FileKVCache(file_cache_path)
     returned_rows: List[Dict[str, Any]] = []
 
     for _, row in input_df.iterrows():
         def _call(**kwargs: Any) -> Dict[str, Any]:
-            return build_prompt_call_pydantic_ai(agents, prompt_cfg, rag_cfg, **kwargs)
+            return build_prompt_call_pydantic_ai(
+                agents,
+                prompt_cfg,
+                rag_cfg,
+                prompt_renderer,
+                templates=spec_templates,
+                **kwargs,
+            )
+
+        # IMPORTANT: include templates in cache key to avoid stale reuse
+        cache_key = "|".join(
+            [
+                row["filename"],
+                model_cfg.model,
+                spec_templates.spec_system,
+                spec_templates.spec_user,
+                input_mode,
+            ]
+        )
+        if qa_templates is not None:
+            cache_key += "|" + "|".join([qa_templates.qa_system, qa_templates.qa_user])
 
         result = fileKVCache.get_or_call(
-            row["filename"],
+            cache_key,
             _call,
             {
                 "input_mode": input_mode,
