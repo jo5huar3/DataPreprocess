@@ -312,7 +312,7 @@ def build_prompt_call_pydantic_ai(
         ctx.update(extra_vars)
 
     user_prompt = prompt_renderer.render(templates.spec_user, **ctx)
-    print(user_prompt)
+    #print(user_prompt)
 
     run_result = _agent_run_compat(agent, user_prompt)
     out: AlpacaRow = run_result.output
@@ -353,6 +353,8 @@ def iter_call_pydantic_ai(
     returned_rows: List[Dict[str, Any]] = []
 
     for _, row in input_df.iterrows():
+        if _ % 10 == 0:
+            print(f"Processing row {_} / {len(input_df)}: {row['filename']}")
         def _call(**kwargs: Any) -> Dict[str, Any]:
             return build_prompt_call_pydantic_ai(
                 agents,
