@@ -121,6 +121,23 @@ def definition_group_stats_df(
 
     return df
 
+def get_hardest_definition(mcc_json: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Get the hardest definition from the DataFrame.
+    """
+    rows = []
+    for d in mcc_json.get("definitions", []):
+        if d.get("kind") != "declaration" or not d.get("name"):
+            continue
+        base = d["name"].split("::", 1)[0]
+        M, *_ = compute_mcc_robust(d.get("mcc"))
+        rows.append({"base": base, "mcc": int(M or 0)})
+
+    df = pd.DataFrame(rows)
+    hardest = df.groupby("base")["mcc"].sum().sort_values(ascending=False)
+    hardest_name = hardest.index[0] if not hardest.empty else None
+    return hardest_name if not hardest_name else find_definition(mcc_json, hardest_name)
+
 def summarize_definition_group(df: pd.DataFrame) -> Dict[str, Any]:
     """
     Summary for a prefix group.

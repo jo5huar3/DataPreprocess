@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
 import pandas as pd
+import re
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+
+
+_TOP_LEVEL_START_RE = re.compile(
+    r"^(module|import|type|property)\b|^[A-Za-z_][A-Za-z0-9_']*\b"
+)
 
 
 def jsonl_append_dedup(
@@ -72,3 +79,121 @@ def jsonl_append_dedup(
 
     df_to_add.to_json(path, orient="records", lines=True, mode="a", force_ascii=False)
     return path
+
+
+
+
+def _is_blank_or_comment(line: str) -> bool:
+    s = line.strip()
+    return (not s) or s.startswith("//")
+
+
+def _is_top_level_start(line: str) -> bool:
+    # Require column 0 to avoid grabbing indented where/let content.
+    if not line or line[:1].isspace():
+        return False
+    if _is_blank_or_comment(line):
+        return False
+    if line.lstrip().startswith("/*"):
+        return False
+    return _TOP_LEVEL_START_RE.match(line) is not None
+
+
+def _starts_signature(line: str, name: str) -> bool:
+    return re.match(rf"^\s*{re.escape(name)}\s*:\s*", line) is not None
+
+
+def _starts_definition(line: str, name: str) -> bool:
+    """
+    Match 'name ... = ...' but avoid matching type constraints '=>'
+    by excluding signature lines and requiring an assignment '='.
+    """
+    # Exclude signature line form "name : ..."
+    if _starts_signature(line, name):
+        return False
+    return re.match(rf"^\s*{re.escape(name)}\b(?!\s*:).*?\s=\s*", line) is not None
+
+
+def _find_definition_span(lines: List[str], name: str) -> Optional[Tuple[int, int]]:
+    start = None
+    for i, line in enumerate(lines):
+        if _starts_definition(line, name):
+            start = i
+            break
+    if start is None:
+        return None
+
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if _is_top_level_start(lines[j]):
+            # allow multiple equations starting with same name
+            if re.match(rf"^{re.escape(name)}\b", lines[j]):
+                continue
+            end = j
+            break
+    return start, end
+
+
+def make_placeholder_block(
+    *,
+    name: str,
+    params: List[str],
+    hole_name: str,
+    docstring: Optional[str] = None,
+) -> List[str]:
+    """
+    HumanEval-ish: put a docstring comment immediately above the stub.
+    Cryptol supports // and /* */ and docstrings /** ... */. :contentReference[oaicite:2]{index=2}
+    """
+    out: List[str] = []
+    if docstring:
+        out.append(f"/** {docstring} */")
+    args = (" " + " ".join(params)) if params else ""
+    out.append(f"{name}{args} = {hole_name}\n")
+    return out
+
+
+@dataclass(frozen=True)
+class MaskedResult:
+    masked_source: str
+    removed_definition: str
+    hole_name: str
+
+
+def mask_declaration_in_source(
+    source: str,
+    *,
+    name: str,
+    params: List[str],
+    hole_name: Optional[str] = None,
+    docstring: Optional[str] = None,
+) -> MaskedResult:
+    """
+    Remove the *definition equations* for `name` and replace with a stub:
+      /** docstring */
+      name <params> = __HOLE_name
+
+    Leaves any existing signature line in place.
+    """
+    hole_name = hole_name or f"__HOLE_{name}"
+    lines = source.splitlines()
+    span = _find_definition_span(lines, name)
+    if span is None:
+        raise ValueError(f"Could not find definition span for '{name}'")
+
+    start, end = span
+    removed = "\n".join(lines[start:end])
+
+    placeholder = make_placeholder_block(
+        name=name,
+        params=params,
+        hole_name=hole_name,
+        docstring=docstring,
+    )
+
+    new_lines = lines[:start] + placeholder + lines[end:]
+    return MaskedResult(
+        masked_source="\n".join(new_lines),
+        removed_definition=removed,
+        hole_name=hole_name,
+    )
