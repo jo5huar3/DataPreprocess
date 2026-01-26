@@ -401,7 +401,8 @@ def iter_call_pydantic_ai(
             {
                 "filename": row["filename"],
                 "filetype": row["filetype"],
-                "set": row.get("set", ""),
+                "split": row.get("split", ""),
+                "avg_mcc_difficulty_bucket" : row.get("avg_mcc_difficulty_bucket", ""),
                 **result,
                 "content": row["content"],
             }
