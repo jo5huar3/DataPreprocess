@@ -281,6 +281,151 @@ def build_agents(
 # =========================
 #   Main call (replacement)
 # =========================
+def build_prompt_masked_instruction_call_pydantic_ai(
+    agent: Agent[Any, Any],
+    prompt_cfg: PromptConfig,
+    rag_cfg: RAGConfig,
+    prompt_renderer: PromptRenderer,
+    *,
+    templates: TemplateBundle,
+    input_mode: str,
+    filename: str,
+    lang: str,
+    code: str,
+    def_name: str,
+    target_definition: str,
+    def_params: Optional[List[str]] = None,
+    hole_name: Optional[str] = None,
+    extra_vars: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    code_excerpt = _safe_excerpt(code, prompt_cfg.max_code_chars)
+
+    rag_context = ""
+    if rag_cfg.enabled:
+        rag_query = build_rag_query(filename=filename, lang=lang, code=code)
+        rag_context = get_rag_context(rag_query, rag_cfg)
+
+    ctx: Dict[str, Any] = {
+        "filename": filename,
+        "lang": lang,
+        "code_excerpt": code_excerpt,
+        "def_name": def_name,
+        "target_definition": target_definition,
+        "def_params": def_params,
+        "hole_name": hole_name,
+        "rag_context": rag_context,
+        "input_max_chars": prompt_cfg.input_max_chars,
+    }
+    if extra_vars:
+        ctx.update(extra_vars)
+
+    user_prompt = prompt_renderer.render(templates.spec_user, **ctx)
+    print(user_prompt)
+
+    run_result = _agent_run_compat(agent, user_prompt)
+    out: AlpacaRow = run_result.output
+
+    out.output = ""
+    out.input = "" if input_mode == "none" else _safe_excerpt(code, prompt_cfg.input_max_chars).replace("\n…(truncated)…\n", "")
+
+    # If you NEVER want code fences in instruction:
+    if "```" in out.instruction:
+        out.instruction = out.instruction.replace("```cryptol", "").replace("```", "").strip()
+
+    return out.model_dump()
+
+
+def iter_call_masked_instruction_pydantic_ai(
+    input_df: pd.DataFrame,
+    *,
+    input_mode: str,
+    file_cache_path: str,
+    model_cfg: Optional[ModelConfig] = None,
+    prompt_cfg: Optional[PromptConfig] = None,
+    rag_cfg: Optional[RAGConfig] = None,
+    spec_templates: Optional[TemplateBundle] = None,           # NEW
+) -> pd.DataFrame:
+    model_cfg = model_cfg or ModelConfig()
+    prompt_cfg = prompt_cfg or PromptConfig()
+    rag_cfg = rag_cfg or RAGConfig()
+    spec_templates = spec_templates or TemplateBundle()
+
+    prompt_renderer = PromptRenderer(prompt_cfg.template_dir)
+    agents = build_agents(
+        model_cfg,
+        prompt_renderer,
+        spec_templates=spec_templates,
+    )
+
+    fileKVCache = FileKVCache(file_cache_path)
+    returned_rows: List[Dict[str, Any]] = []
+
+    for _, row in input_df.iterrows():
+        if _ % 10 == 0:
+            print(f"Processing row {_} / {len(input_df)}: {row['filename']}")
+        def _call(**kwargs: Any) -> Dict[str, Any]:
+            return build_prompt_masked_instruction_call_pydantic_ai(
+                agents,
+                prompt_cfg,
+                rag_cfg,
+                prompt_renderer,
+                templates=spec_templates,
+                **kwargs,
+            )
+        limits = get_simple_instruction_limits(
+            num_declarations=row["num_declarations"],
+            total_mcc=row["total_mcc"]
+        )
+        extra_vars = {
+            "has_module_header": contains_module(row["content"]),
+            **limits
+        }
+        # IMPORTANT: include templates in cache key to avoid stale reuse
+        cache_key = "|".join(
+            [
+                row["filename"],
+                model_cfg.model,
+                spec_templates.spec_system,
+                spec_templates.spec_user,
+                input_mode,
+            ]
+        )
+        #if qa_templates is not None:
+        #    cache_key += "|" + "|".join([qa_templates.qa_system, qa_templates.qa_user])
+
+        result = fileKVCache.get_or_call(
+            cache_key,
+            _call,
+            {
+                "input_mode": input_mode,
+                "filename": row["filename"],
+                "lang": row["filetype"],
+                "code": row["masked_source"],
+                "def_name": row["def_name"],
+                "def_params": row["def_params"],
+                "hole_name": row["hole_name"],
+                "target_definition": row["target_definition"],
+                "extra_vars": extra_vars,
+            },
+        )
+
+        returned_rows.append(
+            {
+                "filename": row["filename"],
+                "filetype": row["filetype"],
+                "split": row.get("split", ""),
+                "avg_mcc_difficulty_bucket" : row.get("avg_mcc_difficulty_bucket", ""),
+                **result,
+                "masked_source": row["masked_source"],
+                "target_definition": row["target_definition"]
+            }
+        )
+
+    return pd.DataFrame(returned_rows)
+
+# =========================
+#   Main call (replacement)
+# =========================
 def build_prompt_call_pydantic_ai(
     agent: Agent[Any, Any],
     prompt_cfg: PromptConfig,
@@ -325,6 +470,7 @@ def build_prompt_call_pydantic_ai(
         out.instruction = out.instruction.replace("```cryptol", "").replace("```", "").strip()
 
     return out.model_dump()
+
 
 def iter_call_pydantic_ai(
     input_df: pd.DataFrame,

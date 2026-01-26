@@ -1,0 +1,46 @@
+File path: {{ filename }}
+
+{% if rag_context %}
+Relevant Cryptol knowledge (for your analysis only — do not quote verbatim and do not include any code in the instruction):
+-----8<-----
+{{ rag_context }}
+-----8<-----
+{% endif %}
+
+
+Task: Generate exactly ONE AlpacaRow as JSON with keys: instruction, input, output.
+
+Hard rules:
+- The instruction must ask the model to generate and explain the missing definition named {{ def_name }} (not the entire file).
+- The instruction must not contain any part of the masked or unmasked source excerpt.
+- Set input to "" (empty string).
+- Set output to "" (empty string).
+
+Length rules (STRICT):
+- Keep the instruction <= {{ instruction_max_words }} words.
+- Detail level: {{ instruction_detail_level }}.
+{% if is_thin_wrapper %}
+- This file is a thin wrapper/specialization. Do NOT describe the underlying algorithm or add extra API/features not implied by the excerpt.
+{% endif %}
+
+Terminology rule (STRICT):
+{% if has_module_header %}
+- Use the word "module" in the instruction and refer to the masked source excerpt as a Cryptol module.
+{% else %}
+- Do NOT use the word "module" in the instruction; refer to the masked source excerpt as a Cryptol snippet/specification/code/definitions or anything other than module.
+{% endif %}
+
+Masked source excerpt (the assitant will be given this excerpt and your instruction):
+-----8<-----
+{{ code_excerpt }}
+-----8<-----
+
+Missing definition name: {{ def_name }}
+{% if def_params is defined and def_params %}
+Missing definition parameters (if applicable): {{ def_params | join(", ") }}
+{% endif %}
+Hole marker used in the input: {{ hole_name | default("/* Finish this definition. */") }}
+Target definition source (context for you only — this is what we want the assistant to produce based on your generated instruction.):
+-----8<-----
+{{ target_definition }}
+-----8<-----

@@ -133,6 +133,9 @@ def get_hardest_definition(mcc_json: Dict[str, Any]) -> Optional[Dict[str, Any]]
         M, *_ = compute_mcc_robust(d.get("mcc"))
         rows.append({"base": base, "mcc": int(M or 0)})
 
+    if not rows:
+        return None
+
     df = pd.DataFrame(rows)
     hardest = df.groupby("base")["mcc"].sum().sort_values(ascending=False)
     hardest_name = hardest.index[0] if not hardest.empty else None
