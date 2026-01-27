@@ -709,3 +709,37 @@ def iter_call_masked_define_explain_pydantic_ai(
         )
 
     return pd.DataFrame(returned_rows)
+
+def render_messages_df(
+    df: pd.DataFrame,
+    *,
+    prompt_cfg: Optional[PromptConfig] = None,
+    df_return_col: Optional[str] = None,
+    system_tmpl: str = "messages_system_format_guard.j2",
+    user_tmpl: str = "messages_user_explain_then_code.j2",
+    assistant_tmpl: str = "messages_assistant_explain_then_code.j2",
+) -> pd.DataFrame:
+    prompt_cfg = prompt_cfg or PromptConfig()
+    env = Environment(
+        loader=FileSystemLoader(prompt_cfg.template_dir),
+        undefined=StrictUndefined,
+        autoescape=False,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    sys_template = env.get_template(system_tmpl)
+    usr_template = env.get_template(user_tmpl)
+    asst_template = env.get_template(assistant_tmpl)
+
+    rows = []
+    for _, r in df.iterrows():
+        ctx = dict(r)
+        return_dict = r.get(df_return_col, {})
+        messages = [
+            {"role": "system", "content": sys_template.render(**ctx).strip()},
+            {"role": "user", "content": usr_template.render(**ctx).strip()},
+            {"role": "assistant", "content": asst_template.render(**ctx).strip()},
+        ]
+        rows.append({**return_dict, "messages": messages})
+
+    return pd.DataFrame(rows)
