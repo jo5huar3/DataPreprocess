@@ -270,30 +270,30 @@ def mask_declaration_in_source(
 def build_masked_examples_df(source_code_df, hole_name="/* Finish this definition. */"):
     rows = []
     for _, row in source_code_df.iterrows():
-        print(f"{_}: Processing {row['filename']}")
+        #print(f"{_}: Processing {row['filename']}")
         mcc_obj = load_json(row["json_path"])
         definition = get_hardest_definition(mcc_obj)
 
         if not definition:
             continue
-
-        masked = mask_declaration_in_source(
-            source=row["content"],
-            name=definition["name"],
-            params=definition.get("params", []),
-            hole_name=hole_name,
+        try:
+            masked = mask_declaration_in_source(
+                source=row["content"],
+                name=definition["name"],
+                params=definition.get("params", []),
+                hole_name=hole_name,
         )
 
+        except Exception as e:
+            print(f"Error processing {row['filename']}: {e}")
+            continue
         rows.append({
-            "filename": row["filename"],
-            "filetype": "cryptol",
-            "json_path": row["json_path"],
+            **row.to_dict(),
             "def_name": definition["name"],
             "def_params": definition.get("params", []),
             "masked_source": masked.masked_source,
             "target_definition": masked.removed_definition,
             "hole_name": masked.hole_name,
-            # optional: store original content too
-            "content": row["content"],
+
         })
     return pd.DataFrame(rows)

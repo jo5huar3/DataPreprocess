@@ -27,6 +27,7 @@ Docs:
 from __future__ import annotations
 
 import os
+import textwrap
 import re
 import time
 from dataclasses import dataclass
@@ -40,7 +41,7 @@ from pydantic import BaseModel
 
 # ---- Your existing cache utility (kept unchanged) ----
 from src.util.file_kv_cache import FileKVCache
-from src.data_s.properties import get_simple_instruction_limits, contains_module
+from src.data_s.properties import get_masked_definition_instruction_limits, get_simple_instruction_limits, contains_module, get_masked_definition_instruction_limits
 dotenv.load_dotenv()
 
 # ---------- Import your rag.py (supports both relative + absolute) ----------
@@ -113,6 +114,9 @@ class TemplateBundle:
     # “spec generation” (AlpacaRow)
     spec_system: str = "system_spec_instruction.j2"
     spec_user: str = "user_alpaca_instruction.j2"
+
+class ExplainResult(BaseModel):
+    explanation: str
 
 # =========================
 #   Prompt rendering
@@ -320,7 +324,7 @@ def build_prompt_masked_instruction_call_pydantic_ai(
         ctx.update(extra_vars)
 
     user_prompt = prompt_renderer.render(templates.spec_user, **ctx)
-    print(user_prompt)
+    #print(user_prompt)
 
     run_result = _agent_run_compat(agent, user_prompt)
     out: AlpacaRow = run_result.output
@@ -372,7 +376,7 @@ def iter_call_masked_instruction_pydantic_ai(
                 templates=spec_templates,
                 **kwargs,
             )
-        limits = get_simple_instruction_limits(
+        limits = get_masked_definition_instruction_limits(
             num_declarations=row["num_declarations"],
             total_mcc=row["total_mcc"]
         )
@@ -411,13 +415,8 @@ def iter_call_masked_instruction_pydantic_ai(
 
         returned_rows.append(
             {
-                "filename": row["filename"],
-                "filetype": row["filetype"],
-                "split": row.get("split", ""),
-                "avg_mcc_difficulty_bucket" : row.get("avg_mcc_difficulty_bucket", ""),
+                **row.to_dict(),
                 **result,
-                "masked_source": row["masked_source"],
-                "target_definition": row["target_definition"]
             }
         )
 
@@ -551,6 +550,161 @@ def iter_call_pydantic_ai(
                 "avg_mcc_difficulty_bucket" : row.get("avg_mcc_difficulty_bucket", ""),
                 **result,
                 "content": row["content"],
+            }
+        )
+
+    return pd.DataFrame(returned_rows)
+
+def _wrap_explanation_as_cryptol_comment(expl: str, width: int = 78) -> str:
+    # Normalize whitespace
+    expl = " ".join((expl or "").strip().split())
+    lines = textwrap.wrap(expl, width=width)
+    if not lines:
+        return "// Explanation:\n// (no explanation provided)"
+    return "\n".join(["// Explanation:"] + [f"// {ln}" for ln in lines])
+
+
+def build_prompt_masked_define_explain_call_pydantic_ai(
+    agent: Agent[Any, Any],                   # output_type = ExplainResult
+    prompt_cfg: PromptConfig,
+    rag_cfg: RAGConfig,
+    prompt_renderer: PromptRenderer,
+    *,
+    templates: TemplateBundle,                # points to explain templates
+    input_mode: str,                          # usually "full" for masked_source
+    filename: str,
+    lang: str,
+    instruction: str,
+    masked_source: str,
+    def_name: str,
+    target_definition: str,
+    def_params: Optional[List[str]] = None,
+    extra_vars: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    # ---- RAG context (optional) ----
+    rag_context = ""
+    if rag_cfg.enabled:
+        rag_query = build_rag_query(filename=filename, lang=lang, code=masked_source)
+        rag_context = get_rag_context(rag_query, rag_cfg)
+
+    # ---- Jinja ctx ----
+    ctx: Dict[str, Any] = {
+        "filename": filename,
+        "lang": lang,
+        "instruction": instruction,
+        "masked_source": _safe_excerpt(masked_source, prompt_cfg.max_code_chars),
+        "def_name": def_name,
+        "def_params": def_params or [],
+        "target_definition": _safe_excerpt(target_definition, prompt_cfg.max_code_chars),
+        "rag_context": rag_context,
+        # default; can be overwritten by extra_vars
+        **extra_vars,
+    }
+    if extra_vars:
+        ctx.update(extra_vars)
+
+    user_prompt = prompt_renderer.render(templates.spec_user, **ctx)
+    #print(user_prompt)
+    run_result = _agent_run_compat(agent, user_prompt)
+    out: ExplainResult = run_result.output
+   
+    return out.model_dump()
+
+def iter_call_masked_define_explain_pydantic_ai(
+    input_df: pd.DataFrame,
+    *,
+    input_mode: str,
+    file_cache_path: str | Path,
+    model_cfg: Optional[ModelConfig] = None,
+    prompt_cfg: Optional[PromptConfig] = None,
+    rag_cfg: Optional[RAGConfig] = None,
+    spec_templates: Optional[TemplateBundle] = None,
+) -> pd.DataFrame:
+    model_cfg = model_cfg or ModelConfig()
+    prompt_cfg = prompt_cfg or PromptConfig()
+    rag_cfg = rag_cfg or RAGConfig()
+    spec_templates = spec_templates or TemplateBundle(
+        spec_system="system_masked_explain.j2",
+        spec_user="user_masked_explain.j2",
+    )
+
+    prompt_renderer = PromptRenderer(prompt_cfg.template_dir)
+
+    # Build an agent that returns ExplainResult (not AlpacaRow)
+    system_prompt = prompt_renderer.render(spec_templates.spec_system).strip()
+    explain_agent: Agent[None, ExplainResult] = Agent(
+        _normalize_model(model_cfg.model),
+        output_type=ExplainResult,
+        system_prompt=system_prompt,
+        retries=model_cfg.retries,
+    )
+
+    fileKVCache = FileKVCache(file_cache_path)
+    returned_rows: List[Dict[str, Any]] = []
+
+    required = ["filename", "filetype", "instruction", "masked_source", "def_name", "target_definition"]
+    missing = [c for c in required if c not in input_df.columns]
+    if missing:
+        raise ValueError(f"iter_call_masked_define_explain_pydantic_ai: input_df missing columns: {missing}")
+
+    for i, row in input_df.iterrows():
+        if i % 10 == 0:
+            print(f"Explain stage {i} / {len(input_df)}: {row['filename']}::{row['def_name']}")
+
+        # Example: derive an explanation length cap from MCC stats if present.
+        # Keep it simple for now; you can plug in your own MCC-based function later.
+        limits = get_masked_definition_instruction_limits(
+            total_mcc=row.get("total_mcc", 0),
+            num_declarations=row.get("num_declarations", 0),
+            max_mcc=row.get("max_mcc", 0),
+            num_params=row.get("num_params", 0),
+            kind=row.get("kind", "declaration"),
+        )
+
+        extra_vars = {**limits}
+
+        def _call(**kwargs: Any) -> Dict[str, Any]:
+            return build_prompt_masked_define_explain_call_pydantic_ai(
+                explain_agent,
+                prompt_cfg,
+                rag_cfg,
+                prompt_renderer,
+                templates=spec_templates,
+                **kwargs,
+            )
+
+        # Cache key must include def_name AND a hash of target_definition
+        # because same filename can have multiple slices/holes.
+        cache_key = "|".join(
+            [
+                row["filename"],
+                model_cfg.model,
+                spec_templates.spec_system,
+                spec_templates.spec_user,
+                input_mode,
+            ]
+        )
+
+        result = fileKVCache.get_or_call(
+            cache_key,
+            _call,
+            {
+                "input_mode": input_mode,
+                "filename": row["filename"],
+                "lang": row["filetype"],
+                "instruction": row["instruction"],
+                "masked_source": row["masked_source"],
+                "def_name": row["def_name"],
+                "def_params": row.get("def_params", []) or [],
+                "target_definition": row["target_definition"],
+                "extra_vars": extra_vars,
+            },
+        )
+
+        returned_rows.append(
+            {
+                **row.to_dict(),
+                **result,
             }
         )
 
