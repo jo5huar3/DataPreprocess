@@ -11,3 +11,6 @@ transformers
 matplotlib
 seaborn
 chromadb
+scikit-learn
+huggingface_hub
+datasets
